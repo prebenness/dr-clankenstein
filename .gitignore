@@ -1,0 +1,17 @@
+# Secrets - never commit.
+.env
+*.token
+*.pem
+*.key
+
+# Build artefacts.
+*.sif
+*.tar
+
+# Editor / OS noise.
+.DS_Store
+.vscode/
+.idea/
+
+# Logs.
+*.log
