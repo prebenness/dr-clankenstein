@@ -2,6 +2,7 @@
 // Secrets are env-injected at container start; never put tokens here.
 {
   gateway: {
+    mode: "local",
     port: 18789,
     bind: "loopback",
     auth: {
@@ -16,7 +17,7 @@
 
   agents: {
     defaults: {
-      workspace: "/home/openclaw/.openclaw/workspace",
+      workspace: "/home/node/.openclaw/workspace",
       model: {
         primary: "openai-codex/gpt-5.5",
       },
@@ -56,6 +57,7 @@
           requireMention: false,
         },
       },
+      replyToMode: "all",
       historyLimit: 50,
       streaming: {
         mode: "partial",
@@ -85,7 +87,7 @@
 
   logging: {
     redactSensitive: "tools",
-    file: "/home/openclaw/.openclaw/logs/openclaw.log",
+    file: "/home/node/.openclaw/logs/openclaw.log",
   },
 
   update: {

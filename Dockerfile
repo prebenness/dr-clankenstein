@@ -2,7 +2,7 @@
 # Single-container deployment. Container is the security boundary;
 # OpenClaw's tool sandbox is disabled (no DinD).
 
-FROM node:20-bookworm-slim
+FROM node:22-bookworm-slim
 
 ARG OPENCLAW_VERSION=2026.5.7
 ENV OPENCLAW_VERSION=${OPENCLAW_VERSION}
@@ -16,17 +16,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         tini \
     && rm -rf /var/lib/apt/lists/*
 
-# Non-root user. UID 1000 matches the typical host user, which keeps
-# bind-mounted ~/.openclaw permissions sane.
-RUN useradd -m -s /bin/bash -u 1000 openclaw
-USER openclaw
-WORKDIR /home/openclaw
+USER node
+WORKDIR /home/node
 
 # Install OpenClaw globally under the user's npm prefix.
-RUN npm config set prefix /home/openclaw/.npm-global \
-    && PATH=/home/openclaw/.npm-global/bin:$PATH npm install -g openclaw@${OPENCLAW_VERSION}
+RUN npm config set prefix /home/node/.npm-global \
+    && PATH=/home/node/.npm-global/bin:$PATH npm install -g openclaw@${OPENCLAW_VERSION}
 
-ENV PATH=/home/openclaw/.npm-global/bin:$PATH \
+ENV PATH=/home/node/.npm-global/bin:$PATH \
     OPENCLAW_HIDE_BANNER=1 \
     OPENCLAW_SKIP_GMAIL_WATCHER=1 \
     OPENCLAW_SKIP_CANVAS_HOST=1 \
@@ -39,7 +36,7 @@ RUN openclaw --version
 EXPOSE 18789
 
 # Mount points expected at runtime:
-#   /home/openclaw/.openclaw -> host ~/.openclaw (config + auth state, rw)
+#   /home/node/.openclaw -> host ~/.openclaw (config + auth state, rw)
 #
 # Required env vars at runtime:
 #   SLACK_BOT_TOKEN          - Slack bot user OAuth token (xoxb-...)

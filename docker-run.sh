@@ -31,7 +31,7 @@ docker build -t "${IMAGE_TAG}" .
 
 docker run --rm -it \
     --name dr-clankenstein \
-    -v "${HOME}/.openclaw:/home/openclaw/.openclaw:rw" \
+    -v "${HOME}/.openclaw:/home/node/.openclaw:rw" \
     -e SLACK_BOT_TOKEN \
     -e SLACK_APP_TOKEN \
     -e OPENCLAW_GATEWAY_TOKEN \
