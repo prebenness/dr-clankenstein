@@ -1,5 +1,3 @@
-// Dr Clankenstein OpenClaw config.
-// Secrets are env-injected at container start; never put tokens here.
 {
   gateway: {
     mode: "local",
@@ -10,7 +8,6 @@
       token: "${OPENCLAW_GATEWAY_TOKEN}",
     },
     controlUi: {
-      // No dashboard exposed; the container is unreachable from outside anyway.
       enabled: false,
     },
   },
@@ -22,16 +19,19 @@
         primary: "openai-codex/gpt-5.5",
       },
       sandbox: {
-        // Container is the security boundary. No nested Docker.
         mode: "off",
       },
-      // Empty skill list for the PoC. Add specific bundled skills later
-      // (allowBundled in `skills` at the root). Never auto-install from ClawHub.
       skills: [],
       heartbeat: {
-        // Disabled. The agent runs to a defined task in a Slurm window;
-        // we don't want background pings.
-        every: "0m",
+        every: "10m",
+        session: "agent:main:slack:channel:c0b389bj4ma",
+        target: "last",
+        to: "C0B389BJ4MA",
+        timeoutSeconds: 120,
+        isolatedSession: false,
+        lightContext: false,
+        directPolicy: "allow",
+        ackMaxChars: 0,
       },
       timeoutSeconds: 1800,
     },
@@ -43,34 +43,45 @@
   channels: {
     slack: {
       enabled: true,
-      // botToken / appToken not set here: OpenClaw reads them from
-      // SLACK_BOT_TOKEN and SLACK_APP_TOKEN env vars for the default account.
       dmPolicy: "allowlist",
       allowFrom: [
-        // Find it in Slack: click your avatar -> View profile -> More -> Copy member ID.
         "U0B364S9A01",
       ],
       channels: {
-        // Find it in Slack: open the channel -> click channel name -> About tab -> Channel ID at the bottom.
         "C0B389BJ4MA": {
           enabled: true,
           requireMention: false,
         },
       },
       replyToMode: "all",
-      historyLimit: 50,
+      historyLimit: 500,
+      thread: {
+        historyScope: "channel",
+        inheritParent: true,
+        initialHistoryLimit: 100,
+      },
       streaming: {
-        mode: "partial",
+        mode: "off",
       },
     },
   },
 
   tools: {
-    allow: ["exec", "process", "read", "write", "edit", "apply_patch"],
+    allow: [
+      "exec",
+      "process",
+      "read",
+      "write",
+      "edit",
+      "apply_patch",
+      "sessions_spawn",
+      "sessions_send",
+      "session_status",
+      "subagents",
+      "message",
+    ],
     deny: ["browser", "canvas"],
     exec: {
-      // Sandbox is off, so exec must run on the gateway (the container itself).
-      // Without this set, exec routing falls back to "auto" which can fail closed.
       host: "gateway",
       timeoutSec: 1800,
     },
@@ -81,28 +92,26 @@
     dmScope: "per-channel-peer",
     reset: {
       mode: "idle",
-      idleMinutes: 60,
+      idleMinutes: 1440,
     },
   },
 
   logging: {
+    level: "debug",
     redactSensitive: "tools",
     file: "/home/node/.openclaw/logs/openclaw.log",
   },
 
   update: {
-    // Never auto-update inside a Slurm-launched container.
     auto: { enabled: false },
     checkOnStart: false,
   },
 
   discovery: {
-    // No mDNS / Bonjour from the compute node.
     mdns: { mode: "off" },
   },
 
   commands: {
-    // Risky surfaces off by default.
     bash: false,
     config: false,
     restart: false,
@@ -110,8 +119,6 @@
 
   plugins: {
     enabled: true,
-    // Empty allow list = no plugins loaded. Pre-install via Dockerfile
-    // and add to this list when we want one.
     allow: [],
   },
 }

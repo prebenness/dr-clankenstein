@@ -4,7 +4,7 @@
 
 FROM node:22-bookworm-slim
 
-ARG OPENCLAW_VERSION=2026.5.7
+ARG OPENCLAW_VERSION=2026.5.16-beta.2
 ENV OPENCLAW_VERSION=${OPENCLAW_VERSION}
 
 # System deps: git for agent repo operations, curl + ca-certs for general use,

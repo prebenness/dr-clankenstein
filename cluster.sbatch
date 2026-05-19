@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=experiment
-#SBATCH --partition=a100q
-#SBATCH --gres=gpu:a100:1
+#SBATCH --partition=hgx2q
+#SBATCH --gres=gpu:4
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
@@ -27,7 +27,9 @@ apptainer run \
     --pwd /home/node \
     --env LD_LIBRARY_PATH=/.singularity.d/libs \
     --bind "$HOME/.openclaw:/home/node/.openclaw" \
+    --bind "$HOME/.gitconfig:/home/node/.gitconfig:ro" \
     --bind "$D1/agent-workspace:/home/node/.openclaw/workspace" \
     --bind "$REPO/AGENTS.md:/home/node/.openclaw/workspace/AGENTS.md:ro" \
+    --bind "$REPO/HEARTBEAT.md:/home/node/.openclaw/workspace/HEARTBEAT.md:ro" \
     --env-file "$REPO/.env" \
     "$D1/containers/agent.sif"
