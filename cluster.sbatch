@@ -30,6 +30,8 @@ apptainer run \
     --bind "$HOME/.gitconfig:/home/node/.gitconfig:ro" \
     --bind "$D1/agent-workspace:/home/node/.openclaw/workspace" \
     --bind "$REPO/AGENTS.md:/home/node/.openclaw/workspace/AGENTS.md:ro" \
+    --bind "$REPO/BOOT.md:/home/node/.openclaw/workspace/BOOT.md:ro" \
     --bind "$REPO/HEARTBEAT.md:/home/node/.openclaw/workspace/HEARTBEAT.md:ro" \
+    --bind "$REPO/USER.md:/home/node/.openclaw/workspace/USER.md:ro" \
     --env-file "$REPO/.env" \
     "$D1/containers/agent.sif"
