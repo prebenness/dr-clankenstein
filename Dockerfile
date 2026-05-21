@@ -4,7 +4,7 @@
 
 FROM node:22-bookworm-slim
 
-ARG OPENCLAW_VERSION=2026.5.16-beta.2
+ARG OPENCLAW_VERSION=2026.5.18
 ENV OPENCLAW_VERSION=${OPENCLAW_VERSION}
 
 # System deps: git for agent repo operations, curl + ca-certs for general use,
@@ -21,7 +21,10 @@ WORKDIR /home/node
 
 # Install OpenClaw globally under the user's npm prefix.
 RUN npm config set prefix /home/node/.npm-global \
-    && PATH=/home/node/.npm-global/bin:$PATH npm install -g openclaw@${OPENCLAW_VERSION}
+    && PATH=/home/node/.npm-global/bin:$PATH npm install -g \
+        openclaw@${OPENCLAW_VERSION} \
+        @openclaw/slack \
+        @openclaw/codex
 
 ENV PATH=/home/node/.npm-global/bin:$PATH \
     OPENCLAW_HIDE_BANNER=1 \

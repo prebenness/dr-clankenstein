@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=experiment
-#SBATCH --partition=hgx2q
-#SBATCH --gres=gpu:4
+#SBATCH --partition=dgx2q
+#SBATCH --gres=gpu:2
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
