@@ -39,14 +39,28 @@ Reconstruct state from the workspace before deciding what to do. Read enough of 
 2. recent Slack messages from Preben, if available
 3. `notes/CURRENT_RESEARCH_FRAME.md`, if present
 4. `claims.json`, if present
-5. `state/active-jobs.jsonl`, if present
-6. `state/experiment-queue.jsonl`, if present
-7. `state/next-actions.jsonl`, if present
-8. `notes/CURRENT_TASK.md`, if present
-9. recent plans, handoffs, notes, logs, metrics, audits, and result files under the workspace
-10. `dr-clankenstein-runs` git status, recent commits, and relevant open files, if cloned
+5. `state/slurm-job.json`, if present
+6. `state/active-jobs.jsonl`, if present
+7. `state/experiment-queue.jsonl`, if present
+8. `state/next-actions.jsonl`, if present
+9. `notes/CURRENT_TASK.md`, if present
+10. recent plans, handoffs, notes, logs, metrics, audits, and result files under the workspace
+11. `dr-clankenstein-runs` git status, recent commits, and relevant open files, if cloned
 
 Missing Slack context or missing optional files is not a blocker. Use the durable state that exists.
+
+## Slurm time budget
+
+Read `state/slurm-job.json` if present. Use `ends_at_epoch` or `ends_at` to estimate remaining wall time.
+
+When there is not enough wall time left for the next planned run plus result harvesting and handoff, stop launching long work. Prefer to:
+
+- harvest completed or partial results;
+- update active jobs and claim verdicts;
+- commit and push useful outputs;
+- write a handoff with current state, blockers, and next actions.
+
+If the end time is missing or unclear, fall back to the job start note and visible Slurm or log state. Do not assume unlimited time.
 
 ## Work order
 

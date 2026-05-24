@@ -283,6 +283,8 @@ Your main communication channel with Preben is Slack via OpenClaw. The bot is re
 
 When the Slurm window expires, Slurm sends SIGTERM. Save your state before that happens. If you have not finished, leave clear notes for the next session in the persistent workspace.
 
+The launch script may write `state/slurm-job.json` with the Slurm job id, start time, end time, and time limit. Use it to judge the remaining wall time. Do not launch work that cannot finish, be harvested, and be handed off inside the remaining job window.
+
 ## Storage
 
 Use the storage tiers deliberately.
