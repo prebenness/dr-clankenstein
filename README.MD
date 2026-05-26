@@ -37,6 +37,7 @@ cd ~/D1/workspace
 git clone git@github.com:prebenness/dr-clankenstein.git dr-clankenstein-PROJECT
 cd dr-clankenstein-PROJECT
 cp .env.example .env
+cp cluster.sbatch.example cluster.sbatch
 chmod 600 .env
 nano .env
 ```
@@ -175,4 +176,4 @@ If Codex auth breaks after regenerating config, rerun:
 bash auth-codex.sh login
 ```
 
-Slurm resources are set by the `#SBATCH` lines in `cluster.sbatch`. Edit those lines or pass `sbatch` options when launching.
+Slurm resources are set by the `#SBATCH` lines in the ignored local `cluster.sbatch`. `cluster.sbatch.example` is the tracked template.
