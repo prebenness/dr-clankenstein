@@ -16,8 +16,16 @@
     defaults: {
       workspace: "/home/node/.openclaw/workspace",
       model: {
-        primary: "openai-codex/gpt-5.5",
+        primary: "openai/gpt-5.5",
       },
+      models: {
+        "openai/gpt-5.5": {
+          params: {
+            fastMode: true,
+          },
+        },
+      },
+      thinkingDefault: "xhigh",
       sandbox: {
         mode: "off",
       },
@@ -36,7 +44,12 @@
       timeoutSeconds: 1800,
     },
     list: [
-      { id: "main", default: true },
+      {
+        id: "main",
+        default: true,
+        thinkingDefault: "xhigh",
+        fastModeDefault: true,
+      },
     ],
   },
 

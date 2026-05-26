@@ -124,11 +124,18 @@ Run once per project from the project checkout on EX3:
 ```bash
 bash setup-project.sh
 bash auth-codex.sh login
+bash auth-codex.sh list
 ```
 
 `setup-project.sh` creates the workspace, OpenClaw state dir, rendered OpenClaw config, git helper, and `state/instance.json`.
 
-`auth-codex.sh login` starts the manual Codex auth flow and stores auth in the project OpenClaw state dir.
+The rendered OpenClaw config sets the default model to `openai/gpt-5.5`, `xhigh` thinking, and fast mode.
+
+`auth-codex.sh login` starts the manual Codex auth flow, stores auth in the project OpenClaw state dir, and runs OpenClaw with `--set-default`. It can look idle while Apptainer and OpenClaw start; wait for the login prompt.
+
+`auth-codex.sh list` checks that the Codex auth profile is visible in the same project OpenClaw state dir.
+
+On a fresh generated config, OpenClaw may print `Config write anomaly ... missing-meta-before-write`. That means OpenClaw is adding its config metadata and writing a backup; it is not an auth failure.
 
 ## Launch
 

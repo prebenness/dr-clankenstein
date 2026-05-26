@@ -38,12 +38,18 @@ mode=${1:-login}
 
 case "$mode" in
     login)
-        set -- openclaw models auth login --provider openai-codex
+        echo "Starting Codex auth inside the container."
+        echo "This can be quiet while Apptainer and OpenClaw start; wait for the login prompt."
+        echo "A fresh generated config may print: Config write anomaly ... missing-meta-before-write."
+        echo "That warning means OpenClaw is adding its config metadata and writing a backup."
+        set -- openclaw models auth login --provider openai-codex --set-default
         ;;
     list)
+        echo "Checking Codex auth profiles inside the container."
         set -- openclaw models auth list --provider openai-codex
         ;;
     validate-config)
+        echo "Validating the project OpenClaw config inside the container."
         set -- openclaw config validate
         ;;
     *)
@@ -51,6 +57,11 @@ case "$mode" in
         exit 1
         ;;
 esac
+
+echo "OpenClaw state: $CLANKENSTEIN_OPENCLAW_DIR"
+echo "OpenClaw config: $OPENCLAW_CONFIG_HOST"
+echo "Command: $*"
+echo
 
 apptainer exec \
     --pwd /home/node \
