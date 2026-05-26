@@ -49,7 +49,6 @@ SLACK_BOT_TOKEN
 SLACK_APP_TOKEN
 SLACK_CHANNEL_ID
 RUNS_REPO_URL
-RUNS_REPO_DIR
 CLANKENSTEIN_WORKSPACE_DIR
 CLANKENSTEIN_OPENCLAW_DIR
 CLANKENSTEIN_GATEWAY_PORT
@@ -68,6 +67,18 @@ RUNS_REPO_URL=https://github.com/prebenness/PROJECT-runs.git
 ```
 
 `GITHUB_PAT` must have contents read/write access to that output repo.
+
+Create that token on GitHub:
+
+1. Create the output repo, for example `prebenness/PROJECT-runs`.
+2. Open GitHub `Settings` -> `Developer settings` -> `Personal access tokens` -> `Fine-grained tokens`.
+3. Click `Generate new token`.
+4. Set `Resource owner` to `prebenness`.
+5. Set `Repository access` to `Only select repositories`, then select `PROJECT-runs`.
+6. Under `Repository permissions`, set `Contents` to `Read and write`.
+7. Generate the token, copy it, and put it in `.env` as `GITHUB_PAT=...`.
+
+Do not put the token in `RUNS_REPO_URL`.
 
 ## Slack App
 
