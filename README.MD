@@ -84,37 +84,36 @@ Do not put the token in `RUNS_REPO_URL`.
 
 Use one Slack app per live agent. Do not reuse the same Slack app token for two running agents.
 
-Create the app at `https://api.slack.com/apps`.
+Create the app:
 
-Required setup:
+1. Open `https://api.slack.com/apps`.
+2. Click `Create New App`.
+3. Choose `From an app manifest`.
+4. Pick your Slack workspace.
+5. Paste the contents of `slack-app-manifest.json`.
+6. Click through `Next` -> `Create`.
 
-```text
-Socket Mode: enabled
-App-level token scope: connections:write
-Bot scopes:
-  app_mentions:read
-  assistant:write
-  channels:history
-  channels:read
-  chat:write
-  commands
-  groups:history
-  groups:read
-  im:history
-  im:read
-  im:write
-  users:read
-Bot events:
-  app_home_opened
-  app_mention
-  assistant_thread_context_changed
-  assistant_thread_started
-  message.channels
-  message.groups
-  message.im
-```
+Copy the app token:
 
-Install the app, invite it to the project channel, and put the channel id in `SLACK_CHANNEL_ID`.
+1. In the Slack app page, open `Basic Information`.
+2. Under `App-Level Tokens`, click `Generate Token and Scopes`.
+3. Add the scope `connections:write`.
+4. Generate the token.
+5. Put it in `.env` as `SLACK_APP_TOKEN=...`.
+
+Copy the bot token:
+
+1. Open `Install App`.
+2. Click `Install to Workspace`.
+3. Copy `Bot User OAuth Token`.
+4. Put it in `.env` as `SLACK_BOT_TOKEN=...`.
+
+Create or choose the project channel:
+
+1. Invite the Slack app to the channel.
+2. Right-click the channel in Slack and copy the channel link.
+3. The channel id is the final `C...` part of the link.
+4. Put it in `.env` as `SLACK_CHANNEL_ID=...`.
 
 OpenClaw Slack docs: `https://docs.openclaw.ai/channels/slack`.
 
