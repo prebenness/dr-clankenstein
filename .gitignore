@@ -18,6 +18,7 @@ cluster.sbatch
 *.log
 logs/*
 !logs/.gitkeep
+multiarch/results/
 
 # Local Docker/OpenClaw scratch state.
 .local/
