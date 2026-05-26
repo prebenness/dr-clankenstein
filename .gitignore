@@ -15,4 +15,8 @@
 
 # Logs.
 *.log
-logs/
+logs/*
+!logs/.gitkeep
+
+# Local Docker/OpenClaw scratch state.
+.local/

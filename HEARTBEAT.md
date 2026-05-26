@@ -36,16 +36,17 @@ In normal operation, do not send `HEARTBEAT_OK`.
 Reconstruct state from the workspace before deciding what to do. Read enough of these to know the active research frame:
 
 1. `AGENTS.md`
-2. recent Slack messages from Preben, if available
-3. `notes/CURRENT_RESEARCH_FRAME.md`, if present
-4. `claims.json`, if present
-5. `state/slurm-job.json`, if present
-6. `state/active-jobs.jsonl`, if present
-7. `state/experiment-queue.jsonl`, if present
-8. `state/next-actions.jsonl`, if present
-9. `notes/CURRENT_TASK.md`, if present
-10. recent plans, handoffs, notes, logs, metrics, audits, and result files under the workspace
-11. `dr-clankenstein-runs` git status, recent commits, and relevant open files, if cloned
+2. `state/instance.json`, if present
+3. recent Slack messages from Preben, if available
+4. `notes/CURRENT_RESEARCH_FRAME.md`, if present
+5. `claims.json`, if present
+6. `state/slurm-job.json`, if present
+7. `state/active-jobs.jsonl`, if present
+8. `state/experiment-queue.jsonl`, if present
+9. `state/next-actions.jsonl`, if present
+10. `notes/CURRENT_TASK.md`, if present
+11. recent plans, handoffs, notes, logs, metrics, audits, and result files under the workspace
+12. configured research output repository git status, recent commits, and relevant open files, if cloned
 
 Missing Slack context or missing optional files is not a blocker. Use the durable state that exists.
 
@@ -178,7 +179,7 @@ Slack messages should be short and decision-oriented:
 
 Do not send routine "still running" messages when logs and state already show that.
 
-After producing publishable output, commit and push it to `dr-clankenstein-runs` before claiming completion.
+After producing publishable output, commit and push it to the configured research output repository before claiming completion.
 
 ## Plumbing checks
 

@@ -39,11 +39,12 @@ RUN openclaw --version
 EXPOSE 18789
 
 # Mount points expected at runtime:
-#   /home/node/.openclaw -> host ~/.openclaw (config + auth state, rw)
+#   /home/node/.openclaw -> per-project OpenClaw state dir (config + auth state, rw)
+#   /home/node/.openclaw/workspace -> per-project persistent workspace
 #
 # Required env vars at runtime:
 #   SLACK_BOT_TOKEN          - Slack bot user OAuth token (xoxb-...)
 #   SLACK_APP_TOKEN          - Slack app-level token (xapp-...)
 #   OPENCLAW_GATEWAY_TOKEN   - random token for gateway auth
-#   GITHUB_PAT               - fine-grained PAT for dr-clankenstein-runs
+#   GITHUB_PAT               - fine-grained PAT for the configured research output repo
 ENTRYPOINT ["/usr/bin/tini", "--", "openclaw", "gateway"]

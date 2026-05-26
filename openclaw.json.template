@@ -1,7 +1,7 @@
 {
   gateway: {
     mode: "local",
-    port: 18789,
+    port: __OPENCLAW_GATEWAY_PORT__,
     bind: "loopback",
     auth: {
       mode: "token",
@@ -24,9 +24,9 @@
       skills: [],
       heartbeat: {
         every: "10m",
-        session: "agent:main:slack:channel:c0b389bj4ma",
+        session: "agent:main:slack:channel:__SLACK_CHANNEL_ID_LOWER__",
         target: "last",
-        to: "C0B389BJ4MA",
+        to: "__SLACK_CHANNEL_ID__",
         timeoutSeconds: 120,
         isolatedSession: false,
         lightContext: false,
@@ -45,10 +45,10 @@
       enabled: true,
       dmPolicy: "allowlist",
       allowFrom: [
-        "U0B364S9A01",
+        "__SLACK_ALLOWED_USER_ID__",
       ],
       channels: {
-        "C0B389BJ4MA": {
+        "__SLACK_CHANNEL_ID__": {
           enabled: true,
           requireMention: false,
         },
