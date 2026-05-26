@@ -127,9 +127,11 @@ bash auth-codex.sh login
 bash auth-codex.sh list
 ```
 
-`setup-project.sh` creates the workspace, OpenClaw state dir, rendered OpenClaw config, git helper, and `state/instance.json`.
+`setup-project.sh` creates the workspace, OpenClaw state dir, rendered OpenClaw config, git helper, `state/instance.json`, and the OpenClaw plugin registry.
 
-The rendered OpenClaw config sets the default model to `openai/gpt-5.5`, `xhigh` thinking, and fast mode.
+The rendered OpenClaw config sets the default model to `openai/gpt-5.5`, `xhigh` thinking, fast mode, Slack, Codex, OpenAI, memory-core, and Slack-visible message-tool replies.
+
+Setup pins the `codex` and `slack` plugins to the OpenClaw version inside the container image, enables them, refreshes the plugin registry, and verifies both entries before returning.
 
 `auth-codex.sh login` starts the manual Codex auth flow, stores auth in the project OpenClaw state dir, and runs OpenClaw with `--set-default`. It can look idle while Apptainer and OpenClaw start; wait for the login prompt.
 

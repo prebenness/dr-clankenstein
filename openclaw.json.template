@@ -74,7 +74,7 @@
         initialHistoryLimit: 100,
       },
       streaming: {
-        mode: "off",
+        mode: "partial",
       },
     },
   },
@@ -97,6 +97,18 @@
     exec: {
       host: "gateway",
       timeoutSec: 1800,
+    },
+    web: {
+      search: {
+        enabled: true,
+        openaiCodex: {
+          enabled: true,
+          mode: "cached",
+        },
+      },
+      fetch: {
+        enabled: true,
+      },
     },
   },
 
@@ -132,6 +144,29 @@
 
   plugins: {
     enabled: true,
-    allow: [],
+    allow: [
+      "slack",
+      "openai",
+      "codex",
+      "memory-core",
+    ],
+    entries: {
+      openai: {
+        enabled: true,
+      },
+      slack: {
+        enabled: true,
+      },
+      codex: {
+        enabled: true,
+      },
+    },
+    bundledDiscovery: "compat",
+  },
+
+  messages: {
+    groupChat: {
+      visibleReplies: "message_tool",
+    },
   },
 }

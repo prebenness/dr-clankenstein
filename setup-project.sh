@@ -49,6 +49,7 @@ SLACK_CHANNEL_NAME=${SLACK_CHANNEL_NAME:-}
 CLANKENSTEIN_WORKSPACE_DIR=${CLANKENSTEIN_WORKSPACE_DIR:-$D1/agent-workspaces/$CLANKENSTEIN_ID}
 CLANKENSTEIN_OPENCLAW_DIR=${CLANKENSTEIN_OPENCLAW_DIR:-$D1/openclaw-state/$CLANKENSTEIN_ID}
 CLANKENSTEIN_GATEWAY_PORT=${CLANKENSTEIN_GATEWAY_PORT:-18789}
+CLANKENSTEIN_IMAGE=${CLANKENSTEIN_IMAGE:-$D1/containers/agent.sif}
 OPENCLAW_CONFIG_TEMPLATE=${OPENCLAW_CONFIG_TEMPLATE:-$REPO/openclaw.json.template}
 OPENCLAW_CONFIG_HOST=$CLANKENSTEIN_OPENCLAW_DIR/openclaw.json
 GIT_ASKPASS_HOST=$CLANKENSTEIN_OPENCLAW_DIR/git-askpass.sh
@@ -61,6 +62,11 @@ fi
 
 if [[ ! -f "$OPENCLAW_CONFIG_TEMPLATE" ]]; then
     echo "Missing OpenClaw config template: $OPENCLAW_CONFIG_TEMPLATE" >&2
+    exit 1
+fi
+
+if [[ ! -f "$CLANKENSTEIN_IMAGE" ]]; then
+    echo "Missing container image: $CLANKENSTEIN_IMAGE" >&2
     exit 1
 fi
 
@@ -91,6 +97,43 @@ else
         "$OPENCLAW_CONFIG_TEMPLATE" > "$OPENCLAW_CONFIG_HOST"
 fi
 
+if command -v module >/dev/null 2>&1; then
+    module use /cm/shared/ex3-modules/latest/modulefiles
+    module load apptainer/1.4.5
+else
+    echo "module command not available; assuming apptainer is already on PATH." >&2
+fi
+
+if ! command -v apptainer >/dev/null 2>&1; then
+    echo "apptainer is not available on PATH." >&2
+    exit 1
+fi
+
+echo "Initializing OpenClaw plugin registry in: $CLANKENSTEIN_OPENCLAW_DIR"
+
+apptainer exec \
+    --pwd /home/node \
+    --env-file "$ENV_FILE" \
+    --env OPENCLAW_STATE_DIR=/home/node/.openclaw \
+    --env OPENCLAW_CONFIG_PATH=/home/node/.openclaw/openclaw.json \
+    --bind "$CLANKENSTEIN_OPENCLAW_DIR:/home/node/.openclaw" \
+    "$CLANKENSTEIN_IMAGE" \
+    sh -lc '
+        set -eu
+        version="$(node -p "require(\"/home/node/.npm-global/lib/node_modules/openclaw/package.json\").version")"
+        echo "Image OpenClaw version: $version"
+
+        openclaw plugins install "npm:@openclaw/codex@$version" --force --pin
+        openclaw plugins install "npm:@openclaw/slack@$version" --force --pin
+        openclaw plugins enable codex
+        openclaw plugins enable slack
+        openclaw plugins registry --refresh
+
+        OPENCLAW_EXPECTED_VERSION="$version" node -e "const fs=require(\"fs\"); const version=process.env.OPENCLAW_EXPECTED_VERSION; const reg=JSON.parse(fs.readFileSync(\"/home/node/.openclaw/plugins/installs.json\", \"utf8\")); for (const id of [\"codex\", \"slack\"]) { const rec=reg.installRecords && reg.installRecords[id]; if (!rec) throw new Error(\"missing install record: \" + id); if (rec.resolvedVersion !== version) throw new Error(id + \" install version \" + rec.resolvedVersion + \" != \" + version); const plugin=(reg.plugins || []).find((p) => p.pluginId === id); if (!plugin) throw new Error(\"missing plugin registry entry: \" + id); if (plugin.packageVersion !== version) throw new Error(id + \" registry version \" + plugin.packageVersion + \" != \" + version); if (plugin.enabled !== true) throw new Error(id + \" is not enabled\"); }"
+
+        openclaw plugins list --enabled
+    '
+
 json_escape() {
     printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
@@ -117,6 +160,7 @@ echo "Instance: $CLANKENSTEIN_ID"
 echo "Workspace: $CLANKENSTEIN_WORKSPACE_DIR"
 echo "OpenClaw state: $CLANKENSTEIN_OPENCLAW_DIR"
 echo "OpenClaw config: $OPENCLAW_CONFIG_HOST"
+echo "OpenClaw plugins: codex and slack initialized"
 echo "Slack channel: $SLACK_CHANNEL_ID${SLACK_CHANNEL_NAME:+ ($SLACK_CHANNEL_NAME)}"
 echo "Runs repo: $RUNS_REPO_URL"
 echo "Next: run the manual Codex auth command from README.MD."
