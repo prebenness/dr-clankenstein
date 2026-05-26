@@ -118,20 +118,26 @@ apptainer exec \
     --env OPENCLAW_CONFIG_PATH=/home/node/.openclaw/openclaw.json \
     --bind "$CLANKENSTEIN_OPENCLAW_DIR:/home/node/.openclaw" \
     "$CLANKENSTEIN_IMAGE" \
-    sh -lc '
+    sh -c '
         set -eu
+        export PATH="/home/node/.npm-global/bin:$PATH"
+        OPENCLAW_BIN=/home/node/.npm-global/bin/openclaw
+        if [ ! -x "$OPENCLAW_BIN" ]; then
+            echo "Missing OpenClaw binary in image: $OPENCLAW_BIN" >&2
+            exit 1
+        fi
         version="$(node -p "require(\"/home/node/.npm-global/lib/node_modules/openclaw/package.json\").version")"
         echo "Image OpenClaw version: $version"
 
-        openclaw plugins install "npm:@openclaw/codex@$version" --force --pin
-        openclaw plugins install "npm:@openclaw/slack@$version" --force --pin
-        openclaw plugins enable codex
-        openclaw plugins enable slack
-        openclaw plugins registry --refresh
+        "$OPENCLAW_BIN" plugins install "npm:@openclaw/codex@$version" --force --pin
+        "$OPENCLAW_BIN" plugins install "npm:@openclaw/slack@$version" --force --pin
+        "$OPENCLAW_BIN" plugins enable codex
+        "$OPENCLAW_BIN" plugins enable slack
+        "$OPENCLAW_BIN" plugins registry --refresh
 
         OPENCLAW_EXPECTED_VERSION="$version" node -e "const fs=require(\"fs\"); const version=process.env.OPENCLAW_EXPECTED_VERSION; const reg=JSON.parse(fs.readFileSync(\"/home/node/.openclaw/plugins/installs.json\", \"utf8\")); for (const id of [\"codex\", \"slack\"]) { const rec=reg.installRecords && reg.installRecords[id]; if (!rec) throw new Error(\"missing install record: \" + id); if (rec.resolvedVersion !== version) throw new Error(id + \" install version \" + rec.resolvedVersion + \" != \" + version); const plugin=(reg.plugins || []).find((p) => p.pluginId === id); if (!plugin) throw new Error(\"missing plugin registry entry: \" + id); if (plugin.packageVersion !== version) throw new Error(id + \" registry version \" + plugin.packageVersion + \" != \" + version); if (plugin.enabled !== true) throw new Error(id + \" is not enabled\"); }"
 
-        openclaw plugins list --enabled
+        "$OPENCLAW_BIN" plugins list --enabled
     '
 
 json_escape() {
