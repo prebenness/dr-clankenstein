@@ -12,6 +12,7 @@ set -euo pipefail
 
 REPO=${SLURM_SUBMIT_DIR:-$(pwd -P)}
 BUILD_AGENT_TARGET=${BUILD_AGENT_TARGET:-}
+BUILD_AGENT_IGNORE_FAKEROOT_COMMAND=${BUILD_AGENT_IGNORE_FAKEROOT_COMMAND:-1}
 
 cd "$REPO"
 mkdir -p logs
@@ -30,5 +31,11 @@ echo "Node: ${SLURM_JOB_NODELIST:-unknown}"
 echo "Host: $(hostname)"
 echo "Host architecture: $(uname -m)"
 echo "Target: $BUILD_AGENT_TARGET"
+echo "Ignore fakeroot command: $BUILD_AGENT_IGNORE_FAKEROOT_COMMAND"
 
-bash multiarch/build-agent-images.sh --only "$BUILD_AGENT_TARGET"
+build_cmd=(bash multiarch/build-agent-images.sh --only "$BUILD_AGENT_TARGET")
+if [[ "$BUILD_AGENT_IGNORE_FAKEROOT_COMMAND" == "1" ]]; then
+    build_cmd+=(--ignore-fakeroot-command)
+fi
+
+"${build_cmd[@]}"

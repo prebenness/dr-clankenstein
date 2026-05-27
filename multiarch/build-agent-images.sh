@@ -6,10 +6,11 @@ REPO=$(pwd -P)
 DEF=${DEF:-$REPO/Apptainer.def}
 OUT_DIR=${OUT_DIR:-$D1/containers}
 ONLY=all
+IGNORE_FAKEROOT_COMMAND=${IGNORE_FAKEROOT_COMMAND:-0}
 
 usage() {
     cat <<'EOF'
-Usage: build-agent-images.sh [--only amd64|arm64|all]
+Usage: build-agent-images.sh [--only amd64|arm64|all] [--ignore-fakeroot-command]
 
 Run from the dr-clankenstein repo on EX3.
 Builds:
@@ -25,6 +26,7 @@ while (($#)); do
     case "$1" in
         --only) ONLY=${2:-}; [[ -n "$ONLY" ]] || { echo "--only requires a value" >&2; exit 2; }; shift 2 ;;
         --only=*) ONLY=${1#*=}; shift ;;
+        --ignore-fakeroot-command) IGNORE_FAKEROOT_COMMAND=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -71,11 +73,16 @@ build_one() {
     local name=$2
     local out=$OUT_DIR/$name
     local tmp=$OUT_DIR/.$name.$$
+    local build_args=(--fakeroot)
 
     require_host_arch "$arch"
+    if [[ "$IGNORE_FAKEROOT_COMMAND" == "1" ]]; then
+        build_args+=(--ignore-fakeroot-command)
+    fi
     echo "Building $out for arch=$arch"
+    echo "Build args: ${build_args[*]} --arch $arch"
     rm -f "$tmp"
-    apptainer build --fakeroot --arch "$arch" "$tmp" "$DEF"
+    apptainer build "${build_args[@]}" --arch "$arch" "$tmp" "$DEF"
     mv -f "$tmp" "$out"
     ls -lh "$out"
     apptainer inspect "$out" | grep -E 'org.label-schema.build-arch|org.opencontainers.image' || true
