@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+D1=${D1:-/home/prebenmn/D1}
 gpus=1
 cpus=1
 time_limit=01:00:00
@@ -9,9 +10,21 @@ script=""
 partitions_arg=""
 script_partition=""
 use_script_partition=0
+env_file=""
+image_mode=${CLANKENSTEIN_IMAGE_MODE:-partition}
+cuda_amd64_image=${CLANKENSTEIN_CUDA_AMD64_IMAGE:-$D1/containers/agent-cuda-amd64.sif}
+cuda_arm64_image=${CLANKENSTEIN_CUDA_ARM64_IMAGE:-$D1/containers/agent-cuda-arm64.sif}
+manual_image=${CLANKENSTEIN_IMAGE:-$cuda_amd64_image}
+manual_gpu_mode=${CLANKENSTEIN_APPTAINER_GPU_MODE:-nv}
+script_runtime="not_checked"
+script_supports_partition_runtime=1
 
 if [[ -f cluster.sbatch ]]; then
     script=cluster.sbatch
+fi
+
+if [[ -f .env ]]; then
+    env_file=.env
 fi
 
 usage() {
@@ -26,6 +39,7 @@ Options:
   --time HH:MM:SS         Wall time. Default: from cluster.sbatch, else 01:00:00
   --mem SIZE              Memory, e.g. 8G. Default: from cluster.sbatch if set
   --script PATH           Read resource defaults from an sbatch file
+  --env-file PATH         Read image settings from an env file. Default: .env if present
   -p, --partitions LIST   Comma-separated partitions to check
   --use-script-partition  Only check the partition from --script/cluster.sbatch
   -h, --help              Show this help
@@ -251,9 +265,173 @@ format_mem() {
     fi
 }
 
+basename_or_dash() {
+    local path=$1
+    [[ -n "$path" ]] || {
+        printf -- '-'
+        return
+    }
+    basename "$path"
+}
+
+expand_runtime_path() {
+    local path=$1
+    path=${path//\$\{D1\}/$D1}
+    path=${path//\$D1/$D1}
+    path=${path/#\~/${HOME:-}}
+    printf '%s\n' "$path"
+}
+
+dotenv_value() {
+    local path=$1
+    local key=$2
+    local line value
+
+    [[ -f "$path" ]] || return 1
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line=${line%$'\r'}
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?${key}=(.*)$ ]] || continue
+        value=${BASH_REMATCH[2]}
+        value=${value%%[[:space:]]#*}
+        value=${value#\"}
+        value=${value%\"}
+        value=${value#\'}
+        value=${value%\'}
+        printf '%s\n' "$value"
+        return 0
+    done <"$path"
+
+    return 1
+}
+
+load_runtime_config() {
+    local value
+
+    [[ -n "$env_file" ]] || return 0
+    [[ -f "$env_file" ]] || die "env file not found: $env_file"
+
+    if value=$(dotenv_value "$env_file" CLANKENSTEIN_IMAGE_MODE); then
+        image_mode=$value
+    fi
+    if value=$(dotenv_value "$env_file" CLANKENSTEIN_CUDA_AMD64_IMAGE); then
+        cuda_amd64_image=$(expand_runtime_path "$value")
+    fi
+    if value=$(dotenv_value "$env_file" CLANKENSTEIN_CUDA_ARM64_IMAGE); then
+        cuda_arm64_image=$(expand_runtime_path "$value")
+    fi
+    if value=$(dotenv_value "$env_file" CLANKENSTEIN_IMAGE); then
+        manual_image=$(expand_runtime_path "$value")
+    fi
+    if value=$(dotenv_value "$env_file" CLANKENSTEIN_APPTAINER_GPU_MODE); then
+        manual_gpu_mode=$value
+    fi
+}
+
+check_script_runtime_support() {
+    [[ -n "$script" && -f "$script" ]] || return 0
+
+    if [[ "$image_mode" != "partition" ]]; then
+        script_runtime="$image_mode"
+        return 0
+    fi
+
+    if grep -q 'select_runtime_for_partition' "$script" \
+        && grep -q 'CLANKENSTEIN_CUDA_AMD64_IMAGE' "$script" \
+        && grep -q 'CLANKENSTEIN_CUDA_ARM64_IMAGE' "$script"; then
+        script_runtime="partition"
+        script_supports_partition_runtime=1
+    else
+        script_runtime="stale"
+        script_supports_partition_runtime=0
+    fi
+}
+
+image_label() {
+    local path=$1
+    local name
+
+    name=$(basename_or_dash "$path")
+    if [[ -n "$path" && -f "$path" ]]; then
+        printf '%s:ok\n' "$name"
+    else
+        printf '%s:missing\n' "$name"
+    fi
+}
+
+runtime_for_partition() {
+    local partition=$1
+
+    runtime=""
+    runtime_image=""
+    runtime_image_label="-"
+    runtime_ok=0
+    runtime_reason="-"
+
+    if [[ "$image_mode" == "manual" ]]; then
+        runtime="manual/$manual_gpu_mode"
+        runtime_image=$manual_image
+        runtime_image_label=$(image_label "$runtime_image")
+        if [[ -f "$runtime_image" ]]; then
+            runtime_ok=1
+            runtime_reason="manual image mode"
+        else
+            runtime_reason="missing manual image: $runtime_image"
+        fi
+        return
+    fi
+
+    if [[ "$image_mode" != "partition" ]]; then
+        runtime="config"
+        runtime_reason="unsupported image mode: $image_mode"
+        return
+    fi
+
+    case "$partition" in
+        a100q|dgx2q|hgx2q|h200q)
+            runtime="cuda-amd64/nv"
+            runtime_image=$cuda_amd64_image
+            runtime_image_label=$(image_label "$runtime_image")
+            ;;
+        a40q|aarchq|huaq|gh200q)
+            runtime="cuda-arm64/nv"
+            runtime_image=$cuda_arm64_image
+            runtime_image_label=$(image_label "$runtime_image")
+            if (( ! script_supports_partition_runtime )); then
+                runtime_reason="script lacks ARM image selection; copy cluster.sbatch.example to cluster.sbatch"
+                return
+            fi
+            ;;
+        milanq)
+            runtime="mixed"
+            runtime_reason="mixed A100/MI210 partition; use a100q or mi210q explicitly"
+            return
+            ;;
+        mi210q|flowq|mi100q|mi50q|amdgpuq|defq)
+            runtime="rocm"
+            runtime_reason="ROCm launch deferred"
+            return
+            ;;
+        *)
+            runtime="unsupported"
+            runtime_reason="no configured runtime for this partition"
+            return
+            ;;
+    esac
+
+    if [[ -f "$runtime_image" ]]; then
+        runtime_ok=1
+        runtime_reason="-"
+    else
+        runtime_reason="missing image: $runtime_image"
+    fi
+}
+
 for arg in "$@"; do
     case "$arg" in
         --script=*) script=${arg#*=} ;;
+        --env-file=*) env_file=${arg#*=} ;;
     esac
 done
 
@@ -264,6 +442,10 @@ while (( idx <= $# )); do
         idx=$((idx + 1))
         (( idx <= $# )) || die "--script requires a path"
         script=${!idx}
+    elif [[ "$arg" == "--env-file" ]]; then
+        idx=$((idx + 1))
+        (( idx <= $# )) || die "--env-file requires a path"
+        env_file=${!idx}
     fi
     idx=$((idx + 1))
 done
@@ -271,6 +453,9 @@ done
 if [[ -n "$script" ]]; then
     read_sbatch_defaults "$script"
 fi
+
+load_runtime_config
+check_script_runtime_support
 
 while (($#)); do
     case "$1" in
@@ -284,6 +469,8 @@ while (($#)); do
         --mem) mem=${2:-}; [[ -n "$mem" ]] || die "--mem requires a value"; shift 2 ;;
         --script=*) shift ;;
         --script) shift 2 ;;
+        --env-file=*) shift ;;
+        --env-file) shift 2 ;;
         --partitions=*|--partition=*) partitions_arg=${1#*=}; shift ;;
         --partitions|--partition|-p) partitions_arg=${2:-}; [[ -n "$partitions_arg" ]] || die "--partitions requires a value"; shift 2 ;;
         --use-script-partition) use_script_partition=1; shift ;;
@@ -434,31 +621,46 @@ request_mem=$(format_mem "$req_mem_mb")
 printf 'REQUEST gpus=%s cpus=%s mem=%s time=%s' "$gpus" "$cpus" "$request_mem" "$time_limit"
 [[ -n "$script" ]] && printf ' script=%s' "$script"
 [[ -n "$script_partition" ]] && printf ' script_partition=%s' "$script_partition"
+printf ' image_mode=%s' "$image_mode"
+[[ -n "$script" ]] && printf ' script_runtime=%s' "$script_runtime"
 printf '\n'
 
 tmp=$(mktemp)
 trap 'rm -f "$tmp"' EXIT
 
 for part in "${!selected_parts[@]}"; do
-    if [[ -n "${part_fit[$part]:-}" ]]; then
+    runtime_for_partition "$part"
+    why=$runtime_reason
+
+    if (( ! runtime_ok )); then
+        rank=3
+        status="BLOCKED"
+        fit_nodes=${part_fit[$part]:-}
+        fit_nodes=$(trim_one_line "$fit_nodes")
+        [[ -n "$fit_nodes" ]] || fit_nodes="-"
+    elif [[ -n "${part_fit[$part]:-}" ]]; then
         if (( ${part_pending_count[$part]:-0} > 0 )); then
             rank=1
-            status="FIT_WITH_QUEUE"
+            status="USABLE_WITH_QUEUE"
+            why="pending jobs ahead"
         else
             rank=0
-            status="FIT_NOW"
+            status="USABLE_NOW"
+            why="-"
         fi
         fit_nodes=$(trim_one_line "${part_fit[$part]}")
     else
         rank=2
-        status="NO_FIT"
+        status="NO_RESOURCES"
         fit_nodes="-"
+        why="no node currently fits request"
     fi
 
     if (( ${part_sbatch_rc[$part]:-0} != 0 )); then
-        if [[ "$status" == "NO_FIT" ]]; then
+        if [[ "$status" != "BLOCKED" ]]; then
             status="REJECTED"
             rank=3
+            why=${part_sbatch_msg[$part]:-"sbatch test failed"}
         fi
     fi
 
@@ -471,13 +673,16 @@ for part in "${!selected_parts[@]}"; do
     if (( ${#sched} > 110 )); then
         sched="${sched:0:107}..."
     fi
+    if (( ${#why} > 90 )); then
+        why="${why:0:87}..."
+    fi
 
-    printf '%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$rank" "$status" "$part" "$fit_nodes" "$free" "$best" "$pending" "$sched" >>"$tmp"
+    printf '%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$rank" "$status" "$part" "$runtime" "$runtime_image_label" "$fit_nodes" "$free" "$best" "$pending" "$why" "$sched" >>"$tmp"
 done
 
 {
-    printf 'STATUS\tPARTITION\tFIT_NODES\tFREE\tBEST_NODE\tPENDING\tSBATCH_TEST\n'
+    printf 'STATUS\tPARTITION\tRUNTIME\tIMAGE\tFIT_NODES\tFREE\tBEST_NODE\tPENDING\tWHY\tSBATCH_TEST\n'
     sort -t$'\t' -k1,1n -k3,3 "$tmp" | cut -f2-
 } | {
     if command -v column >/dev/null 2>&1; then
