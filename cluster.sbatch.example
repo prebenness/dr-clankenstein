@@ -264,7 +264,10 @@ apptainer exec \
         codex_pkg=$state_npm/node_modules/@openai/codex/package.json
         openclaw_global=/home/node/.npm-global/lib/node_modules/openclaw
         resolve_platform_pkg() {
-            node -e "require(\"module\").createRequire(\"$state_npm/node_modules/@openai/codex/bin/codex.js\").resolve(\"$platform_pkg/package.json\")" >/dev/null
+            node -e "require(\"module\").createRequire(\"$state_npm/node_modules/@openai/codex/bin/codex.js\").resolve(\"$platform_pkg/package.json\")"
+        }
+        resolve_openclaw_peer() {
+            node -e "require(\"module\").createRequire(\"$state_npm/node_modules/@openclaw/codex/dist/index.js\").resolve(\"openclaw\")"
         }
         install_platform_pkg() {
             tmp_pkg_dir="$(mktemp -d "$state_npm/.codex-platform.XXXXXX")"
@@ -296,7 +299,7 @@ apptainer exec \
         }
         ensure_openclaw_peer() {
             mkdir -p "$state_npm/node_modules"
-            if ! node -e "require(\"module\").createRequire(\"$state_npm/node_modules/@openclaw/codex/dist/index.js\").resolve(\"openclaw/package.json\")" >/dev/null 2>&1; then
+            if ! resolve_openclaw_peer >/dev/null 2>&1; then
                 echo "Repairing OpenClaw peer package link in state npm tree..."
                 if [ ! -f "$openclaw_global/package.json" ]; then
                     echo "Global OpenClaw package is missing: $openclaw_global" >&2
@@ -305,7 +308,7 @@ apptainer exec \
                 rm -rf "$state_npm/node_modules/openclaw"
                 ln -s "$openclaw_global" "$state_npm/node_modules/openclaw"
             fi
-            node -e "require(\"module\").createRequire(\"$state_npm/node_modules/@openclaw/codex/dist/index.js\").resolve(\"openclaw/package.json\")" >/dev/null
+            resolve_openclaw_peer >/dev/null
         }
 
         if [ ! -f "$codex_pkg" ]; then
@@ -328,13 +331,13 @@ apptainer exec \
         platform_pkg="@openai/codex-linux-$arch"
         platform_spec="@openai/codex@$codex_version-linux-$arch"
 
-        if resolve_platform_pkg; then
+        if resolve_platform_pkg >/dev/null 2>&1; then
             echo "Codex platform package present: $platform_pkg@$codex_version"
         else
             echo "Installing missing Codex platform package by extraction: $platform_pkg from $platform_spec"
             install_platform_pkg
         fi
-        resolve_platform_pkg
+        resolve_platform_pkg >/dev/null
         ensure_openclaw_peer
     '
 
