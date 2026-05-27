@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=build-agent-image
+#SBATCH --job-name=build-img
 #SBATCH --partition=gh200q
 #SBATCH --nodes=1
 #SBATCH --ntasks=1

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=clankenstein
+#SBATCH --job-name=compute-run
 #SBATCH --partition=dgx2q
 #SBATCH --gres=gpu:2
 #SBATCH --nodes=1
