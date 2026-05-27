@@ -15,6 +15,9 @@ Run from the dr-clankenstein repo on EX3.
 Builds:
   $D1/containers/agent-cuda-amd64.sif
   $D1/containers/agent-cuda-arm64.sif
+
+The target architecture must match the build node architecture because
+Apptainer executes the image %post section during the build.
 EOF
 }
 
@@ -42,12 +45,34 @@ fi
 command -v apptainer >/dev/null 2>&1 || { echo "apptainer is not available on PATH" >&2; exit 1; }
 mkdir -p "$OUT_DIR"
 
+host_arch() {
+    case "$(uname -m)" in
+        x86_64|amd64) echo amd64 ;;
+        aarch64|arm64) echo arm64 ;;
+        *) uname -m ;;
+    esac
+}
+
+require_host_arch() {
+    local target=$1
+    local host
+
+    host=$(host_arch)
+    if [[ "$host" != "$target" ]]; then
+        echo "Cannot build target arch=$target on host arch=$host." >&2
+        echo "Apptainer runs %post on the build node, so build this target on a $target node." >&2
+        echo "For arm64 on EX3, submit: sbatch --partition=gh200q --export=ALL,BUILD_AGENT_TARGET=arm64 multiarch/build-agent-image.sbatch" >&2
+        exit 2
+    fi
+}
+
 build_one() {
     local arch=$1
     local name=$2
     local out=$OUT_DIR/$name
     local tmp=$OUT_DIR/.$name.$$
 
+    require_host_arch "$arch"
     echo "Building $out for arch=$arch"
     rm -f "$tmp"
     apptainer build --fakeroot --arch "$arch" "$tmp" "$DEF"
