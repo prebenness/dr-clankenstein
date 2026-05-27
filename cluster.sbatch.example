@@ -249,6 +249,46 @@ EOF
 
 echo "JOB STARTED: id=${SLURM_JOB_ID:-unknown} start=$JOB_START_TIME end=${JOB_END_TIME:-unknown} limit=${JOB_TIME_LIMIT:-unknown}"
 
+echo "Checking Codex platform package for selected runtime..."
+apptainer exec \
+    --pwd /home/node \
+    --env-file "$ENV_FILE" \
+    --env OPENCLAW_STATE_DIR=/home/node/.openclaw \
+    --env OPENCLAW_CONFIG_PATH=/home/node/.openclaw/openclaw.json \
+    --bind "$CLANKENSTEIN_OPENCLAW_DIR:/home/node/.openclaw" \
+    "$CLANKENSTEIN_IMAGE" \
+    sh -c '
+        set -eu
+        export PATH="/home/node/.npm-global/bin:$PATH"
+        state_npm=/home/node/.openclaw/npm
+        codex_pkg=$state_npm/node_modules/@openai/codex/package.json
+        if [ ! -f "$codex_pkg" ]; then
+            echo "State Codex package is missing; refreshing OpenClaw plugin registry first."
+            openclaw_version="$(node -p "require(\"/home/node/.npm-global/lib/node_modules/openclaw/package.json\").version")"
+            /home/node/.npm-global/bin/openclaw plugins install "npm:@openclaw/codex@$openclaw_version" --force --pin
+            /home/node/.npm-global/bin/openclaw plugins install "npm:@openclaw/slack@$openclaw_version" --force --pin
+            /home/node/.npm-global/bin/openclaw plugins enable codex
+            /home/node/.npm-global/bin/openclaw plugins enable slack
+            /home/node/.npm-global/bin/openclaw plugins registry --refresh
+        fi
+
+        arch="$(node -p "process.arch")"
+        case "$arch" in
+            x64|arm64) ;;
+            *) echo "Unsupported Codex platform architecture: $arch" >&2; exit 2 ;;
+        esac
+
+        codex_version="$(node -p "require(\"$codex_pkg\").version")"
+        platform_pkg="@openai/codex-linux-$arch"
+
+        if node -e "require.resolve(\"$platform_pkg/package.json\", { paths: [\"$state_npm/node_modules\"] })" >/dev/null 2>&1; then
+            echo "Codex platform package present: $platform_pkg@$codex_version"
+        else
+            echo "Installing missing Codex platform package: $platform_pkg@$codex_version"
+            npm install --prefix "$state_npm" --no-audit --no-fund --save-optional "$platform_pkg@$codex_version"
+        fi
+    '
+
 apptainer run \
     "${APPTAINER_GPU_ARGS[@]}" \
     --pwd /home/node \
