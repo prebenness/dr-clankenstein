@@ -69,11 +69,73 @@ SLACK_CHANNEL_NAME=${SLACK_CHANNEL_NAME:-}
 CLANKENSTEIN_WORKSPACE_DIR=${CLANKENSTEIN_WORKSPACE_DIR:-$D1/agent-workspaces/$CLANKENSTEIN_ID}
 CLANKENSTEIN_OPENCLAW_DIR=${CLANKENSTEIN_OPENCLAW_DIR:-$D1/openclaw-state/$CLANKENSTEIN_ID}
 CLANKENSTEIN_GATEWAY_PORT=${CLANKENSTEIN_GATEWAY_PORT:-18789}
-CLANKENSTEIN_IMAGE=${CLANKENSTEIN_IMAGE:-$D1/containers/agent.sif}
+CLANKENSTEIN_IMAGE_MODE=${CLANKENSTEIN_IMAGE_MODE:-partition}
+CLANKENSTEIN_CUDA_AMD64_IMAGE=${CLANKENSTEIN_CUDA_AMD64_IMAGE:-$D1/containers/agent-cuda-amd64.sif}
+CLANKENSTEIN_CUDA_ARM64_IMAGE=${CLANKENSTEIN_CUDA_ARM64_IMAGE:-$D1/containers/agent-cuda-arm64.sif}
+CLANKENSTEIN_IMAGE=${CLANKENSTEIN_IMAGE:-$CLANKENSTEIN_CUDA_AMD64_IMAGE}
 OPENCLAW_CONFIG_HOST=$CLANKENSTEIN_OPENCLAW_DIR/openclaw.json
 GIT_ASKPASS_HOST=$CLANKENSTEIN_OPENCLAW_DIR/git-askpass.sh
 RUNS_REPO_DIR=${RUNS_REPO_DIR:-$(basename "$RUNS_REPO_URL" .git)}
 INSTANCE_FILE=$CLANKENSTEIN_WORKSPACE_DIR/state/instance.json
+
+select_runtime_for_partition() {
+    local partition=$1
+
+    case "$partition" in
+        a100q|dgx2q|hgx2q|h200q)
+            CLANKENSTEIN_IMAGE=$CLANKENSTEIN_CUDA_AMD64_IMAGE
+            CLANKENSTEIN_APPTAINER_GPU_MODE=nv
+            ;;
+        a40q|aarchq|huaq|gh200q)
+            CLANKENSTEIN_IMAGE=$CLANKENSTEIN_CUDA_ARM64_IMAGE
+            CLANKENSTEIN_APPTAINER_GPU_MODE=nv
+            ;;
+        milanq)
+            echo "Partition milanq spans A100 and MI210 nodes; use a100q for CUDA or defer MI210/ROCm." >&2
+            exit 2
+            ;;
+        mi210q|flowq|mi100q|mi50q|amdgpuq|defq)
+            echo "ROCm partition $partition is deferred; not launching the agent there." >&2
+            exit 2
+            ;;
+        "")
+            echo "SLURM_JOB_PARTITION is not set; cannot select container image." >&2
+            exit 2
+            ;;
+        *)
+            echo "Unsupported partition for automatic image selection: $partition" >&2
+            exit 2
+            ;;
+    esac
+}
+
+case "$CLANKENSTEIN_IMAGE_MODE" in
+    partition)
+        select_runtime_for_partition "${SLURM_JOB_PARTITION:-}"
+        ;;
+    manual)
+        CLANKENSTEIN_APPTAINER_GPU_MODE=${CLANKENSTEIN_APPTAINER_GPU_MODE:-nv}
+        ;;
+    *)
+        echo "CLANKENSTEIN_IMAGE_MODE must be 'partition' or 'manual'." >&2
+        exit 2
+        ;;
+esac
+
+case "$CLANKENSTEIN_APPTAINER_GPU_MODE" in
+    nv) APPTAINER_GPU_ARGS=(--nv) ;;
+    rocm) APPTAINER_GPU_ARGS=(--rocm) ;;
+    none) APPTAINER_GPU_ARGS=() ;;
+    *)
+        echo "CLANKENSTEIN_APPTAINER_GPU_MODE must be 'nv', 'rocm', or 'none'." >&2
+        exit 2
+        ;;
+esac
+
+if [[ ! -f "$CLANKENSTEIN_IMAGE" ]]; then
+    echo "Missing selected container image: $CLANKENSTEIN_IMAGE" >&2
+    exit 1
+fi
 
 if [[ ! -d "$CLANKENSTEIN_WORKSPACE_DIR" ]]; then
     echo "Missing workspace dir: $CLANKENSTEIN_WORKSPACE_DIR" >&2
@@ -138,6 +200,17 @@ echo "OpenClaw state: $CLANKENSTEIN_OPENCLAW_DIR"
 echo "OpenClaw config: $OPENCLAW_CONFIG_HOST"
 echo "Slack channel: $SLACK_CHANNEL_ID${SLACK_CHANNEL_NAME:+ ($SLACK_CHANNEL_NAME)}"
 echo "Runs repo: $RUNS_REPO_URL"
+echo "Slurm partition: ${SLURM_JOB_PARTITION:-unknown}"
+echo "Slurm node list: ${SLURM_JOB_NODELIST:-unknown}"
+echo "Host: $(hostname)"
+echo "Host architecture: $(uname -m)"
+echo "Image mode: $CLANKENSTEIN_IMAGE_MODE"
+echo "Selected image: $CLANKENSTEIN_IMAGE"
+echo "Apptainer GPU mode: $CLANKENSTEIN_APPTAINER_GPU_MODE"
+apptainer --version || true
+if [[ "$CLANKENSTEIN_APPTAINER_GPU_MODE" == "nv" ]] && command -v nvidia-smi >/dev/null 2>&1; then
+    nvidia-smi -L || nvidia-smi || true
+fi
 
 JOB_STATE=$CLANKENSTEIN_WORKSPACE_DIR/state/slurm-job.json
 
@@ -177,7 +250,7 @@ EOF
 echo "JOB STARTED: id=${SLURM_JOB_ID:-unknown} start=$JOB_START_TIME end=${JOB_END_TIME:-unknown} limit=${JOB_TIME_LIMIT:-unknown}"
 
 apptainer run \
-    --nv \
+    "${APPTAINER_GPU_ARGS[@]}" \
     --pwd /home/node \
     --env-file "$ENV_FILE" \
     --env LD_LIBRARY_PATH=/.singularity.d/libs \
