@@ -263,6 +263,37 @@ apptainer exec \
         state_npm=/home/node/.openclaw/npm
         codex_pkg=$state_npm/node_modules/@openai/codex/package.json
         openclaw_global=/home/node/.npm-global/lib/node_modules/openclaw
+        resolve_platform_pkg() {
+            node -e "require(\"module\").createRequire(\"$state_npm/node_modules/@openai/codex/bin/codex.js\").resolve(\"$platform_pkg/package.json\")" >/dev/null
+        }
+        install_platform_pkg() {
+            tmp_pkg_dir="$(mktemp -d "$state_npm/.codex-platform.XXXXXX")"
+            pack_json="$tmp_pkg_dir/npm-pack.json"
+            if ! npm pack --json --pack-destination "$tmp_pkg_dir" "$platform_pkg@$codex_version" > "$pack_json"; then
+                rm -rf "$tmp_pkg_dir"
+                exit 2
+            fi
+            tarball_name="$(node -p "require(\"$pack_json\")[0].filename")"
+            case "$tarball_name" in
+                /*) tarball="$tarball_name" ;;
+                *) tarball="$tmp_pkg_dir/$tarball_name" ;;
+            esac
+            if [ ! -f "$tarball" ]; then
+                echo "Packed Codex platform tarball not found: $tarball" >&2
+                rm -rf "$tmp_pkg_dir"
+                exit 2
+            fi
+
+            target="$state_npm/node_modules/$platform_pkg"
+            target_tmp="$target.tmp.$$"
+            mkdir -p "$state_npm/node_modules/@openai"
+            rm -rf "$target_tmp"
+            mkdir -p "$target_tmp"
+            tar -xzf "$tarball" -C "$target_tmp" --strip-components=1
+            rm -rf "$target"
+            mv "$target_tmp" "$target"
+            rm -rf "$tmp_pkg_dir"
+        }
         ensure_openclaw_peer() {
             mkdir -p "$state_npm/node_modules"
             if ! node -e "require(\"module\").createRequire(\"$state_npm/node_modules/@openclaw/codex/dist/index.js\").resolve(\"openclaw/package.json\")" >/dev/null 2>&1; then
@@ -296,13 +327,13 @@ apptainer exec \
         codex_version="$(node -p "require(\"$codex_pkg\").version")"
         platform_pkg="@openai/codex-linux-$arch"
 
-        if node -e "require.resolve(\"$platform_pkg/package.json\", { paths: [\"$state_npm/node_modules\"] })" >/dev/null 2>&1; then
+        if resolve_platform_pkg; then
             echo "Codex platform package present: $platform_pkg@$codex_version"
         else
-            echo "Installing missing Codex platform package: $platform_pkg@$codex_version"
-            npm install --prefix "$state_npm" --no-audit --no-fund --save-optional "$platform_pkg@$codex_version"
+            echo "Installing missing Codex platform package by extraction: $platform_pkg@$codex_version"
+            install_platform_pkg
         fi
-        node -e "require.resolve(\"$platform_pkg/package.json\", { paths: [\"$state_npm/node_modules\"] })" >/dev/null
+        resolve_platform_pkg
         ensure_openclaw_peer
     '
 
