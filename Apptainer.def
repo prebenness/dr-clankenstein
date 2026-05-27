@@ -8,14 +8,18 @@ From: node:22-bookworm-slim
     rm -rf /var/lib/apt/lists/*
     mkdir -p /home/node/.npm-global
     chown -R node:node /home/node/.npm-global
-    npm config set prefix /home/node/.npm-global -g
-    npm install -g \
+    without_host_fakeroot() {
+        env -u LD_PRELOAD -u FAKEROOTKEY -u FAKED_MODE -u FAKEROOT_FD "$@"
+    }
+    env | grep -E '^(LD_PRELOAD|FAKEROOT|FAKED)' || true
+    without_host_fakeroot npm config set prefix /home/node/.npm-global -g
+    without_host_fakeroot npm install -g \
         openclaw@2026.5.18 \
         @openclaw/slack@2026.5.18 \
         @openclaw/codex@2026.5.18 \
         --prefix /home/node/.npm-global
     chown -R node:node /home/node/.npm-global
-    /home/node/.npm-global/bin/openclaw --version
+    without_host_fakeroot /home/node/.npm-global/bin/openclaw --version
 
 %environment
     export PATH=/home/node/.npm-global/bin:$PATH
