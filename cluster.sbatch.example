@@ -262,6 +262,21 @@ apptainer exec \
         export PATH="/home/node/.npm-global/bin:$PATH"
         state_npm=/home/node/.openclaw/npm
         codex_pkg=$state_npm/node_modules/@openai/codex/package.json
+        openclaw_global=/home/node/.npm-global/lib/node_modules/openclaw
+        ensure_openclaw_peer() {
+            mkdir -p "$state_npm/node_modules"
+            if ! node -e "require(\"module\").createRequire(\"$state_npm/node_modules/@openclaw/codex/dist/index.js\").resolve(\"openclaw/package.json\")" >/dev/null 2>&1; then
+                echo "Repairing OpenClaw peer package link in state npm tree..."
+                if [ ! -f "$openclaw_global/package.json" ]; then
+                    echo "Global OpenClaw package is missing: $openclaw_global" >&2
+                    exit 2
+                fi
+                rm -rf "$state_npm/node_modules/openclaw"
+                ln -s "$openclaw_global" "$state_npm/node_modules/openclaw"
+            fi
+            node -e "require(\"module\").createRequire(\"$state_npm/node_modules/@openclaw/codex/dist/index.js\").resolve(\"openclaw/package.json\")" >/dev/null
+        }
+
         if [ ! -f "$codex_pkg" ]; then
             echo "State Codex package is missing; refreshing OpenClaw plugin registry first."
             openclaw_version="$(node -p "require(\"/home/node/.npm-global/lib/node_modules/openclaw/package.json\").version")"
@@ -287,6 +302,8 @@ apptainer exec \
             echo "Installing missing Codex platform package: $platform_pkg@$codex_version"
             npm install --prefix "$state_npm" --no-audit --no-fund --save-optional "$platform_pkg@$codex_version"
         fi
+        node -e "require.resolve(\"$platform_pkg/package.json\", { paths: [\"$state_npm/node_modules\"] })" >/dev/null
+        ensure_openclaw_peer
     '
 
 apptainer run \
