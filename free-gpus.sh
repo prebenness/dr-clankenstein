@@ -148,6 +148,59 @@ compact_why() {
     esac
 }
 
+append_unique_csv() {
+    local current=$1
+    local value=$2
+    local item
+
+    while IFS= read -r item; do
+        [[ "$item" == "$value" ]] && {
+            printf '%s\n' "$current"
+            return
+        }
+    done < <(printf '%s\n' "$current" | tr ',' '\n')
+
+    if [[ -n "$current" ]]; then
+        printf '%s,%s\n' "$current" "$value"
+    else
+        printf '%s\n' "$value"
+    fi
+}
+
+gpu_label_for_node() {
+    local node=$1
+    local raw_type=${2,,}
+
+    case "$node" in
+        g001) printf 'V100-32G\n'; return ;;
+        g002) printf 'A100-80G\n'; return ;;
+        g003) printf 'H200\n'; return ;;
+        gh001|gh002) printf 'H100-96G\n'; return ;;
+        n009|n010|n011|n012) printf 'A40-48G\n'; return ;;
+        n013|n014) printf 'A100-40G\n'; return ;;
+        n015|n016|n023) printf 'MI210-64G\n'; return ;;
+        n001|n002|n003) printf 'MI50\n'; return ;;
+        n004) printf 'MI100\n'; return ;;
+    esac
+
+    case "$raw_type" in
+        a100*) printf 'A100\n'; return ;;
+        a40*) printf 'A40\n'; return ;;
+        h200*) printf 'H200\n'; return ;;
+        gh200*) printf 'H100\n'; return ;;
+        mi210*) printf 'MI210\n'; return ;;
+        mi100*) printf 'MI100\n'; return ;;
+        mi50*) printf 'MI50\n'; return ;;
+        tesla|v100*) printf 'V100\n'; return ;;
+    esac
+
+    if [[ -n "$raw_type" && "$raw_type" != "any" ]]; then
+        printf '%s\n' "${raw_type^^}"
+    else
+        printf 'unknown\n'
+    fi
+}
+
 gpu_count_from_gres() {
     local gres=$1
     local total=0
@@ -564,6 +617,7 @@ need_cmd squeue
 
 declare -A node_parts node_state node_type node_total_gpu node_free_gpu node_total_cpu node_free_cpu node_total_mem node_free_mem
 declare -A part_seen part_fit part_best part_best_score part_pending_count part_pending_first part_sbatch_msg part_sbatch_rc
+declare -A part_gpu_label
 declare -A part_free_gpu part_total_gpu part_free_cpu part_total_cpu
 
 req_mem_mb=$(parse_mem_mb "$mem")
@@ -645,9 +699,11 @@ for node in "${!node_total_gpu[@]}"; do
         total_cpu=${node_total_cpu[$node]}
         free_mem=${node_free_mem[$node]}
         total_mem=${node_total_mem[$node]}
+        gpu_label=$(gpu_label_for_node "$node" "${node_type[$node]}")
 
         part_total_gpu[$part]=$(( ${part_total_gpu[$part]:-0} + total_gpu ))
         part_total_cpu[$part]=$(( ${part_total_cpu[$part]:-0} + total_cpu ))
+        part_gpu_label[$part]=$(append_unique_csv "${part_gpu_label[$part]:-}" "$gpu_label")
         if schedulable_state "${node_state[$node]}"; then
             part_free_gpu[$part]=$(( ${part_free_gpu[$part]:-0} + free_gpu ))
             part_free_cpu[$part]=$(( ${part_free_cpu[$part]:-0} + free_cpu ))
@@ -656,7 +712,7 @@ for node in "${!node_total_gpu[@]}"; do
         score=$((free_gpu * 1000000 + free_cpu * 1000 + free_mem / 1024))
         if [[ -z "${part_best_score[$part]+x}" || "$score" -gt "${part_best_score[$part]}" ]]; then
             part_best_score[$part]=$score
-            part_best[$part]="${node}(${node_type[$node]},${free_gpu}/${total_gpu}g,${free_cpu}/${total_cpu}c"
+            part_best[$part]="${node}(${gpu_label},${free_gpu}/${total_gpu}g,${free_cpu}/${total_cpu}c"
             if (( req_mem_mb > 0 && total_mem > 0 )); then
                 part_best[$part]+=",${free_mem}/${total_mem}M"
             fi
@@ -739,6 +795,7 @@ for part in "${!selected_parts[@]}"; do
     pending="${part_pending_count[$part]:-0}"
     [[ -n "${part_pending_first[$part]:-}" ]] && pending+=",first=${part_pending_first[$part]}"
 
+    gpu=${part_gpu_label[$part]:--}
     free="${part_free_gpu[$part]:-0}/${part_total_gpu[$part]:-0}g,${part_free_cpu[$part]:-0}/${part_total_cpu[$part]:-0}c"
     best=${part_best[$part]:--}
     sched=${part_sbatch_msg[$part]:--}
@@ -749,13 +806,13 @@ for part in "${!selected_parts[@]}"; do
         why="${why:0:87}..."
     fi
 
-    printf '%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$rank" "$status" "$part" "$runtime" "$runtime_image_label" "$fit_nodes" "$free" "$best" "$pending" "$why" "$sched" >>"$tmp"
+    printf '%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$rank" "$status" "$part" "$gpu" "$runtime" "$runtime_image_label" "$fit_nodes" "$free" "$best" "$pending" "$why" "$sched" >>"$tmp"
 done
 
 if (( verbose )); then
     {
-        printf 'STATUS\tPARTITION\tRUNTIME\tIMAGE\tFIT_NODES\tFREE\tBEST_NODE\tPENDING\tWHY\tSBATCH_TEST\n'
+        printf 'STATUS\tPARTITION\tGPU\tRUNTIME\tIMAGE\tFIT_NODES\tFREE\tBEST_NODE\tPENDING\tWHY\tSBATCH_TEST\n'
         sort -t$'\t' -k1,1n -k3,3 "$tmp" | cut -f2-
     } | {
         if command -v column >/dev/null 2>&1; then
@@ -766,12 +823,12 @@ if (( verbose )); then
     }
 else
     {
-        printf 'STATUS\tPARTITION\tRUNTIME\tFIT\tFREE\tBEST\tNOTE\n'
-        while IFS=$'\t' read -r _rank status part runtime _image fit_nodes free best pending why _sched; do
+        printf 'STATUS\tPARTITION\tGPU\tFIT\tFREE\tBEST\tNOTE\n'
+        while IFS=$'\t' read -r _rank status part gpu _runtime _image fit_nodes free best pending why _sched; do
             printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
                 "$(compact_status "$status")" \
                 "$part" \
-                "$runtime" \
+                "$(shorten "$gpu" 24)" \
                 "$(summarize_nodes "$fit_nodes")" \
                 "$free" \
                 "$(shorten "$best" 34)" \
