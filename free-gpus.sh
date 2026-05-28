@@ -10,6 +10,7 @@ script=""
 partitions_arg=""
 script_partition=""
 use_script_partition=0
+verbose=0
 env_file=""
 image_mode=${CLANKENSTEIN_IMAGE_MODE:-partition}
 cuda_amd64_image=${CLANKENSTEIN_CUDA_AMD64_IMAGE:-$D1/containers/agent-cuda-amd64.sif}
@@ -42,6 +43,7 @@ Options:
   --env-file PATH         Read image settings from an env file. Default: .env if present
   -p, --partitions LIST   Comma-separated partitions to check
   --use-script-partition  Only check the partition from --script/cluster.sbatch
+  --verbose               Show image paths, pending-job details, and sbatch test output
   -h, --help              Show this help
 EOF
 }
@@ -75,6 +77,75 @@ trim_one_line() {
     value=${value# }
     value=${value% }
     printf '%s\n' "$value"
+}
+
+shorten() {
+    local value=$1
+    local max=$2
+
+    if (( ${#value} > max )); then
+        printf '%s...\n' "${value:0:max-3}"
+    else
+        printf '%s\n' "$value"
+    fi
+}
+
+summarize_nodes() {
+    local nodes=$1
+    local node first=""
+    local count=0
+
+    [[ -n "$nodes" && "$nodes" != "-" ]] || {
+        printf -- '-\n'
+        return
+    }
+
+    for node in $nodes; do
+        ((count += 1))
+        [[ -n "$first" ]] || first=$node
+    done
+
+    if (( count <= 1 )); then
+        printf '%s\n' "$first"
+    else
+        printf '%s+%d\n' "$first" "$((count - 1))"
+    fi
+}
+
+compact_status() {
+    case "$1" in
+        USABLE_NOW) printf 'OK\n' ;;
+        USABLE_WITH_QUEUE) printf 'QUEUE\n' ;;
+        NO_RESOURCES) printf 'FULL\n' ;;
+        REJECTED) printf 'REJECT\n' ;;
+        BLOCKED) printf 'BLOCK\n' ;;
+        *) printf '%s\n' "$1" ;;
+    esac
+}
+
+compact_why() {
+    local status=$1
+    local why=$2
+    local pending=$3
+    local pending_count=${pending%%,*}
+
+    case "$status" in
+        USABLE_NOW)
+            printf -- '-\n'
+            ;;
+        USABLE_WITH_QUEUE)
+            printf 'queue=%s\n' "$pending_count"
+            ;;
+        NO_RESOURCES)
+            printf 'no fitting node\n'
+            ;;
+        REJECTED)
+            printf 'scheduler rejected\n'
+            ;;
+        *)
+            shorten "$why" 42
+            ;;
+    esac
 }
 
 gpu_count_from_gres() {
@@ -474,6 +545,7 @@ while (($#)); do
         --partitions=*|--partition=*) partitions_arg=${1#*=}; shift ;;
         --partitions|--partition|-p) partitions_arg=${2:-}; [[ -n "$partitions_arg" ]] || die "--partitions requires a value"; shift 2 ;;
         --use-script-partition) use_script_partition=1; shift ;;
+        --verbose) verbose=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "unknown option: $1" ;;
     esac
@@ -681,13 +753,36 @@ for part in "${!selected_parts[@]}"; do
         "$rank" "$status" "$part" "$runtime" "$runtime_image_label" "$fit_nodes" "$free" "$best" "$pending" "$why" "$sched" >>"$tmp"
 done
 
-{
-    printf 'STATUS\tPARTITION\tRUNTIME\tIMAGE\tFIT_NODES\tFREE\tBEST_NODE\tPENDING\tWHY\tSBATCH_TEST\n'
-    sort -t$'\t' -k1,1n -k3,3 "$tmp" | cut -f2-
-} | {
-    if command -v column >/dev/null 2>&1; then
-        column -t -s $'\t'
-    else
-        cat
-    fi
-}
+if (( verbose )); then
+    {
+        printf 'STATUS\tPARTITION\tRUNTIME\tIMAGE\tFIT_NODES\tFREE\tBEST_NODE\tPENDING\tWHY\tSBATCH_TEST\n'
+        sort -t$'\t' -k1,1n -k3,3 "$tmp" | cut -f2-
+    } | {
+        if command -v column >/dev/null 2>&1; then
+            column -t -s $'\t'
+        else
+            cat
+        fi
+    }
+else
+    {
+        printf 'STATUS\tPARTITION\tRUNTIME\tFIT\tFREE\tBEST\tNOTE\n'
+        while IFS=$'\t' read -r _rank status part runtime _image fit_nodes free best pending why _sched; do
+            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+                "$(compact_status "$status")" \
+                "$part" \
+                "$runtime" \
+                "$(summarize_nodes "$fit_nodes")" \
+                "$free" \
+                "$(shorten "$best" 34)" \
+                "$(compact_why "$status" "$why" "$pending")"
+        done < <(sort -t$'\t' -k1,1n -k3,3 "$tmp")
+    } | {
+        if command -v column >/dev/null 2>&1; then
+            column -t -s $'\t'
+        else
+            cat
+        fi
+    }
+    printf '\nUse --verbose for image checks, pending-job details, and sbatch --test-only output.\n'
+fi
