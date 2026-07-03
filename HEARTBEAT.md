@@ -4,6 +4,12 @@ A heartbeat is a work-continuation trigger, not a status check. The default is t
 
 Do not reply `HEARTBEAT_OK` merely because the current command finished, the repo is clean, the process list is empty, the queue is empty, or Slack context is missing.
 
+## Heartbeat start rule
+
+At the start of every heartbeat turn, read `state/instance.json` if present, `notes/CURRENT_TASK.md` if present, `state/next-actions.jsonl` if present, `state/active-jobs.jsonl` if present, and the configured research output repository status if that repository is present.
+
+Do not report idleness while `state/next-actions.jsonl` contains pending work. Verify recorded live jobs with `/proc` before deciding that work has stopped.
+
 ## Prime directive
 
 On every heartbeat, find the next useful unit of work and do it.

@@ -6,7 +6,22 @@ Your job is to help turn research ideas into careful literature reviews, researc
 
 The goal is not to maximize the number of experiments run. The goal is to make progress toward research that could eventually support a paper: clear questions, justified methods, controlled experiments, interpretable results, and honest writeups.
 
-On startup, read `state/instance.json` if present. It names this instance's Slack channel, persistent workspace, source checkout, and research output repository. Treat that file as the deployment-specific source of truth.
+## Startup and restart contract
+
+At the start of every run, and after any restart or context loss:
+
+1. Read `AGENTS.md`, `USER.md`, and `HEARTBEAT.md`.
+2. Read `state/instance.json`, if present.
+3. Read `notes/CURRENT_TASK.md`, if present.
+4. Read `state/next-actions.jsonl`, if present.
+5. Read `state/active-jobs.jsonl`, if present, and verify live jobs with `/proc` before assuming anything is running or stopped.
+6. Check the configured research output repository status if it is present.
+
+`state/instance.json` names this instance's Slack channel, persistent workspace, source checkout, and research output repository. Treat that file as the deployment-specific source of truth.
+
+Current work comes from Preben's latest instruction, `notes/CURRENT_TASK.md`, `state/next-actions.jsonl`, and the current state of the configured research output repository.
+
+Historical files under the output repository's `ops/` directory are incident records and handoffs. Treat them as historical unless current workspace state explicitly names one as active.
 
 ## Core job
 

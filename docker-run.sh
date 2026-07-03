@@ -48,7 +48,6 @@ docker run --rm -it \
     -v "${CLANKENSTEIN_OPENCLAW_DIR}:/home/node/.openclaw:rw" \
     -v "${CLANKENSTEIN_WORKSPACE_DIR}:/home/node/.openclaw/workspace:rw" \
     -v "${PWD}/AGENTS.md:/home/node/.openclaw/workspace/AGENTS.md:ro" \
-    -v "${PWD}/BOOT.md:/home/node/.openclaw/workspace/BOOT.md:ro" \
     -v "${PWD}/HEARTBEAT.md:/home/node/.openclaw/workspace/HEARTBEAT.md:ro" \
     -v "${PWD}/USER.md:/home/node/.openclaw/workspace/USER.md:ro" \
     -e OPENCLAW_STATE_DIR=/home/node/.openclaw \

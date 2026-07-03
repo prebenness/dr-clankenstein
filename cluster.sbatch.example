@@ -359,7 +359,6 @@ apptainer run \
     --bind "$HOME/.gitconfig:/home/node/.gitconfig:ro" \
     --bind "$CLANKENSTEIN_WORKSPACE_DIR:/home/node/.openclaw/workspace" \
     --bind "$REPO/AGENTS.md:/home/node/.openclaw/workspace/AGENTS.md:ro" \
-    --bind "$REPO/BOOT.md:/home/node/.openclaw/workspace/BOOT.md:ro" \
     --bind "$REPO/HEARTBEAT.md:/home/node/.openclaw/workspace/HEARTBEAT.md:ro" \
     --bind "$REPO/USER.md:/home/node/.openclaw/workspace/USER.md:ro" \
     "$CLANKENSTEIN_IMAGE"
