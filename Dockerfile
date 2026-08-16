@@ -2,10 +2,9 @@
 # Single-container deployment. Container is the security boundary;
 # OpenClaw's tool sandbox is disabled (no DinD).
 
-FROM node:22-bookworm-slim
+FROM node:24-bookworm-slim
 
-ARG OPENCLAW_VERSION=2026.5.18
-ENV OPENCLAW_VERSION=${OPENCLAW_VERSION}
+ARG OPENCLAW_VERSION=latest
 
 # System deps: git for agent repo operations, curl + ca-certs for general use,
 # tini as PID 1 so SIGTERM from docker/Slurm reaches the gateway cleanly.
@@ -22,9 +21,7 @@ WORKDIR /home/node
 # Install OpenClaw globally under the user's npm prefix.
 RUN npm config set prefix /home/node/.npm-global \
     && PATH=/home/node/.npm-global/bin:$PATH npm install -g \
-        openclaw@${OPENCLAW_VERSION} \
-        @openclaw/slack \
-        @openclaw/codex
+        openclaw@${OPENCLAW_VERSION}
 
 ENV PATH=/home/node/.npm-global/bin:$PATH \
     OPENCLAW_HIDE_BANNER=1 \

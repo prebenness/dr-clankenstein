@@ -16,13 +16,21 @@
     defaults: {
       workspace: "/home/node/.openclaw/workspace",
       model: {
-        primary: "openai/gpt-5.5",
+        primary: "openai/gpt-5.6-sol",
       },
       models: {
-        "openai/gpt-5.5": {
+        "openai/gpt-5.6-sol": {
+          agentRuntime: {
+            id: "codex",
+          },
           params: {
             fastMode: true,
           },
+        },
+      },
+      promptOverlays: {
+        gpt5: {
+          personality: "off",
         },
       },
       thinkingDefault: "xhigh",

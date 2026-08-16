@@ -66,6 +66,13 @@ if [[ ! -f "$OPENCLAW_CONFIG_TEMPLATE" ]]; then
     exit 1
 fi
 
+for prompt_file in AGENTS.md SOUL.md USER.md HEARTBEAT.md; do
+    if [[ ! -f "$REPO/$prompt_file" ]]; then
+        echo "Missing prompt file: $REPO/$prompt_file" >&2
+        exit 1
+    fi
+done
+
 if [[ ! -f "$CLANKENSTEIN_IMAGE" ]]; then
     echo "Missing container image: $CLANKENSTEIN_IMAGE" >&2
     exit 1
@@ -83,6 +90,12 @@ case "$1" in
 esac
 EOF
 chmod 700 "$GIT_ASKPASS_HOST"
+
+echo "Checking GitHub access to: $RUNS_REPO_URL"
+if ! GIT_ASKPASS="$GIT_ASKPASS_HOST" GIT_TERMINAL_PROMPT=0 git ls-remote "$RUNS_REPO_URL" >/dev/null; then
+    echo "Cannot read the configured output repository with GITHUB_PAT." >&2
+    exit 1
+fi
 
 SLACK_CHANNEL_ID_LOWER="$(printf '%s' "$SLACK_CHANNEL_ID" | tr '[:upper:]' '[:lower:]')"
 
@@ -130,14 +143,13 @@ apptainer exec \
         version="$(node -p "require(\"/home/node/.npm-global/lib/node_modules/openclaw/package.json\").version")"
         echo "Image OpenClaw version: $version"
 
-        "$OPENCLAW_BIN" plugins install "npm:@openclaw/codex@$version" --force --pin
-        "$OPENCLAW_BIN" plugins install "npm:@openclaw/slack@$version" --force --pin
+        "$OPENCLAW_BIN" plugins install "npm:@openclaw/codex@latest" --force --pin
+        "$OPENCLAW_BIN" plugins install "npm:@openclaw/slack@latest" --force --pin
         "$OPENCLAW_BIN" plugins enable codex
         "$OPENCLAW_BIN" plugins enable slack
         "$OPENCLAW_BIN" plugins registry --refresh
-
-        OPENCLAW_EXPECTED_VERSION="$version" node -e "const fs=require(\"fs\"); const version=process.env.OPENCLAW_EXPECTED_VERSION; const reg=JSON.parse(fs.readFileSync(\"/home/node/.openclaw/plugins/installs.json\", \"utf8\")); for (const id of [\"codex\", \"slack\"]) { const rec=reg.installRecords && reg.installRecords[id]; if (!rec) throw new Error(\"missing install record: \" + id); if (rec.resolvedVersion !== version) throw new Error(id + \" install version \" + rec.resolvedVersion + \" != \" + version); const plugin=(reg.plugins || []).find((p) => p.pluginId === id); if (!plugin) throw new Error(\"missing plugin registry entry: \" + id); if (plugin.packageVersion !== version) throw new Error(id + \" registry version \" + plugin.packageVersion + \" != \" + version); if (plugin.enabled !== true) throw new Error(id + \" is not enabled\"); }"
-
+        "$OPENCLAW_BIN" config validate
+        "$OPENCLAW_BIN" plugins doctor
         "$OPENCLAW_BIN" plugins list --enabled
     '
 
@@ -169,5 +181,5 @@ echo "OpenClaw state: $CLANKENSTEIN_OPENCLAW_DIR"
 echo "OpenClaw config: $OPENCLAW_CONFIG_HOST"
 echo "OpenClaw plugins: codex and slack initialized"
 echo "Slack channel: $SLACK_CHANNEL_ID${SLACK_CHANNEL_NAME:+ ($SLACK_CHANNEL_NAME)}"
-echo "Runs repo: $RUNS_REPO_URL"
+echo "Runs repo: $RUNS_REPO_URL (access verified)"
 echo "Next: run the manual Codex auth command from README.MD."

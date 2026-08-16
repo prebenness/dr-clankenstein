@@ -126,13 +126,16 @@ nano .env
 bash setup-project.sh
 bash auth-codex.sh login
 bash auth-codex.sh list
+bash auth-codex.sh probe
 ```
 
 `setup-project.sh` creates the workspace, OpenClaw state dir, rendered config, git helper, `state/instance.json`, and plugin registry.
 
-`auth-codex.sh login` starts manual Codex auth and can look idle while Apptainer and OpenClaw start; wait for the login prompt.
+`auth-codex.sh login` starts the ChatGPT device-code login used by the Codex runtime.
 
 `auth-codex.sh list` checks the auth profile in this project's OpenClaw state dir.
+
+`auth-codex.sh probe` checks that OpenClaw can reach the configured OpenAI model route with that profile.
 
 A fresh config may print `Config write anomaly ... missing-meta-before-write`; OpenClaw is writing metadata, not failing auth.
 

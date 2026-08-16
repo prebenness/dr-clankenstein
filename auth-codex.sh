@@ -42,18 +42,22 @@ case "$mode" in
         echo "This can be quiet while Apptainer and OpenClaw start; wait for the login prompt."
         echo "A fresh generated config may print: Config write anomaly ... missing-meta-before-write."
         echo "That warning means OpenClaw is adding its config metadata and writing a backup."
-        set -- openclaw models auth login --provider openai-codex --set-default
+        set -- openclaw models auth login --provider openai --device-code
         ;;
     list)
         echo "Checking Codex auth profiles inside the container."
-        set -- openclaw models auth list --provider openai-codex
+        set -- openclaw models auth list --provider openai
+        ;;
+    probe)
+        echo "Probing the configured OpenAI model route inside the container."
+        set -- openclaw models status --probe --probe-provider openai
         ;;
     validate-config)
         echo "Validating the project OpenClaw config inside the container."
         set -- openclaw config validate
         ;;
     *)
-        echo "Usage: bash auth-codex.sh [login|list|validate-config]" >&2
+        echo "Usage: bash auth-codex.sh [login|list|probe|validate-config]" >&2
         exit 1
         ;;
 esac
