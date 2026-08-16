@@ -143,8 +143,33 @@ apptainer exec \
         version="$(node -p "require(\"/home/node/.npm-global/lib/node_modules/openclaw/package.json\").version")"
         echo "Image OpenClaw version: $version"
 
-        "$OPENCLAW_BIN" plugins install "npm:@openclaw/codex@latest" --force --pin
-        "$OPENCLAW_BIN" plugins install "npm:@openclaw/slack@latest" --force --pin
+        echo "Checking npm registry access"
+        if ! timeout --kill-after=10s 30s npm ping --registry=https://registry.npmjs.org/; then
+            echo "The container cannot reach the npm registry." >&2
+            exit 1
+        fi
+
+        install_plugin() {
+            plugin="$1"
+            echo "Installing OpenClaw plugin: $plugin (10-minute limit)"
+            status=0
+            OPENCLAW_PLUGIN_LIFECYCLE_TRACE=1 \
+                timeout --kill-after=30s 10m \
+                "$OPENCLAW_BIN" plugins install "$plugin" --force --pin || status=$?
+            if [ "$status" -eq 0 ]; then
+                return 0
+            fi
+
+            if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+                echo "Timed out while installing $plugin." >&2
+            else
+                echo "Failed to install $plugin (exit $status)." >&2
+            fi
+            exit "$status"
+        }
+
+        install_plugin "@openclaw/codex"
+        install_plugin "@openclaw/slack"
         "$OPENCLAW_BIN" plugins enable codex
         "$OPENCLAW_BIN" plugins enable slack
         "$OPENCLAW_BIN" plugins registry --refresh
