@@ -17,6 +17,7 @@ ENV_FILE="${AGENT_ENV_FILE:-$ROOT/.env}"
 LOCK_FILE="$ROOT/image.lock"
 REGISTRY_AUTH_FILE="${AGENT_REGISTRY_AUTH_FILE:-$HOME/.apptainer/agent-registry-auth.json}"
 HOST_SENTINEL="$RUN_DIR/host-only-sentinel"
+RESOLV_CONF="$RUN_DIR/resolv.conf"
 
 WORKER_PID=
 GATEWAY_PID=
@@ -256,6 +257,8 @@ prepare() {
     umask 077
     mkdir -p "$STATE" "$WORKSPACE" "$BOOTSTRAP/state" "$RUN_DIR" "$LOG_DIR"
     rm -f -- "$RUN_DIR/gateway.env" "$RUN_DIR/worker.env" "$HOST_SENTINEL"
+    [[ -s /etc/resolv.conf ]] || die 'host DNS resolver configuration is empty'
+    install -m 0444 /etc/resolv.conf "$RESOLV_CONF"
     write_gateway_token
     render_config
     write_instance_state
@@ -323,6 +326,7 @@ build_gateway_args() {
         --bind "$STATE:/home/node/.openclaw:rw"
         --bind "$BOOTSTRAP:/gateway-workspace:ro"
         --bind "$GATEWAY_BRIDGE:/run/agent-bridge:ro"
+        --bind "$RESOLV_CONF:/etc/resolv.conf:ro"
     )
 
     if [[ -n "$CA_BUNDLE" ]]; then
@@ -339,6 +343,7 @@ build_worker_args() {
         --bind "$WORKER_BRIDGE:/run/agent-bridge:ro"
         --bind "$WORKER_BRIDGE/home:$AGENT_LOGIN_HOME:ro"
         --bind "$WORKSPACE:/home/node/.openclaw/workspace:rw"
+        --bind "$RESOLV_CONF:/etc/resolv.conf:ro"
     )
 
     case "$AGENT_GPU" in

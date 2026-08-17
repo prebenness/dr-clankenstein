@@ -13,7 +13,7 @@ The same immutable image runs as two separate Apptainer instances:
 
 OpenClaw and the Slack connection run in the gateway. Model-controlled shell, process and file tools are sent over a loopback SSH connection to the worker. The model does not receive a shell in the gateway.
 
-The launcher reads `.env` on the host and gives each instance only its assigned variables. Temporary environment files are removed after process startup. Apptainer disables automatic host-home, current-directory, host-filesystem and administrator bind mounts. The worker's only persistent writable mount is `.agent/workspace/`.
+The launcher reads `.env` on the host and gives each instance only its assigned variables. Temporary environment files are removed after process startup. Apptainer disables automatic host-home, current-directory, host-filesystem and administrator bind mounts. The worker's only persistent writable mount is `.agent/workspace/`. A generated copy of `/etc/resolv.conf` is mounted read-only to provide DNS.
 
 Both instances use the host network stack for outbound access. The design isolates host files, credentials, environment and processes. It does not filter network destinations.
 
