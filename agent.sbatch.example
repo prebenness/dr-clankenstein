@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+#SBATCH --job-name=compute-run
+#SBATCH --partition=a100q
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --time=24:00:00
+#SBATCH --output=.agent/logs/slurm-%j.out
+
+set -Eeuo pipefail
+
+cd "$SLURM_SUBMIT_DIR"
+export AGENT_GPU=nv
+./agent run

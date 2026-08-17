@@ -1,0 +1,463 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+LOCAL="$ROOT/.agent"
+IMAGE="$LOCAL/runtime.sif"
+IMAGE_REF_FILE="$LOCAL/image.ref"
+STATE="$LOCAL/gateway-state"
+WORKSPACE="$LOCAL/workspace"
+BOOTSTRAP="$LOCAL/bootstrap"
+BRIDGE="$LOCAL/bridge"
+GATEWAY_BRIDGE="$BRIDGE/gateway"
+WORKER_BRIDGE="$BRIDGE/worker"
+RUN_DIR="$LOCAL/run"
+LOG_DIR="$LOCAL/logs"
+ENV_FILE="${AGENT_ENV_FILE:-$ROOT/.env}"
+LOCK_FILE="$ROOT/image.lock"
+
+WORKER_PID=
+GATEWAY_PID=
+WORKER_ENV=
+GATEWAY_ENV=
+
+die() {
+    printf 'ERROR: %s\n' "$*" >&2
+    exit 1
+}
+
+usage() {
+    cat <<'EOF'
+Usage: ./agent COMMAND
+
+Commands:
+  pull       Pull the image pinned in image.lock.
+  init       Create this agent's local state and configuration.
+  auth       Sign in to Codex inside the gateway box.
+  validate   Validate configuration, authentication, plugins, and isolation.
+  run        Run the worker and Slack gateway in the foreground.
+EOF
+}
+
+need_command() {
+    command -v "$1" >/dev/null 2>&1 || die "$1 is required"
+}
+
+load_optional_env() {
+    if [[ -f "$ENV_FILE" ]]; then
+        set -a
+        # shellcheck disable=SC1090
+        source "$ENV_FILE"
+        set +a
+    fi
+}
+
+require_value() {
+    local name="$1"
+    [[ -n "${!name:-}" ]] || die "$name is required in $ENV_FILE"
+    [[ "${!name}" != *$'\n'* ]] || die "$name must be one line"
+}
+
+load_env() {
+    [[ -f "$ENV_FILE" ]] || die "missing $ENV_FILE; create it from .env.example"
+    load_optional_env
+
+    require_value AGENT_ID
+    require_value SLACK_BOT_TOKEN
+    require_value SLACK_APP_TOKEN
+    require_value SLACK_CHANNEL_ID
+    require_value SLACK_ALLOWED_USER_ID
+    require_value GITHUB_PAT
+
+    [[ "$AGENT_ID" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] ||
+        die 'AGENT_ID must contain 1-32 lower-case letters, digits, or hyphens'
+    [[ "$SLACK_CHANNEL_ID" =~ ^[A-Z0-9]+$ ]] || die 'SLACK_CHANNEL_ID is not valid'
+    [[ "$SLACK_ALLOWED_USER_ID" =~ ^[A-Z0-9]+$ ]] || die 'SLACK_ALLOWED_USER_ID is not valid'
+    if [[ -n "${GITHUB_REPOSITORY:-}" ]]; then
+        [[ "$GITHUB_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ||
+            die 'GITHUB_REPOSITORY must have the form owner/repository'
+    fi
+}
+
+load_lock() {
+    [[ -f "$LOCK_FILE" ]] || die "missing $LOCK_FILE"
+    # shellcheck disable=SC1090
+    source "$LOCK_FILE"
+    [[ "${IMAGE_REF:-}" =~ ^docker://ghcr\.io/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] ||
+        die 'image.lock does not yet contain an immutable GHCR image reference'
+    [[ "${IMAGE_ARCH:-}" == amd64 ]] || die "unsupported image architecture: ${IMAGE_ARCH:-missing}"
+    [[ "$(uname -m)" == x86_64 ]] || die 'this first image supports x86-64 hosts only'
+}
+
+derive_runtime() {
+    local checksum
+    checksum="$(printf '%s' "$AGENT_ID" | cksum)"
+    checksum="${checksum%% *}"
+
+    AGENT_WORKER_PORT="${AGENT_WORKER_PORT:-$((22000 + checksum % 1000))}"
+    AGENT_GATEWAY_PORT="${AGENT_GATEWAY_PORT:-$((18000 + checksum % 1000))}"
+    AGENT_GPU="${AGENT_GPU:-none}"
+    [[ "$AGENT_WORKER_PORT" =~ ^[0-9]+$ ]] || die 'AGENT_WORKER_PORT must be an integer'
+    [[ "$AGENT_GATEWAY_PORT" =~ ^[0-9]+$ ]] || die 'AGENT_GATEWAY_PORT must be an integer'
+    ((AGENT_WORKER_PORT >= 1024 && AGENT_WORKER_PORT <= 65535)) || die 'AGENT_WORKER_PORT is out of range'
+    ((AGENT_GATEWAY_PORT >= 1024 && AGENT_GATEWAY_PORT <= 65535)) || die 'AGENT_GATEWAY_PORT is out of range'
+    [[ "$AGENT_WORKER_PORT" != "$AGENT_GATEWAY_PORT" ]] || die 'gateway and worker ports must differ'
+    [[ "$AGENT_GPU" == none || "$AGENT_GPU" == nv || "$AGENT_GPU" == rocm ]] ||
+        die 'AGENT_GPU must be none, nv, or rocm'
+}
+
+resolve_container_identity() {
+    local common=(exec --compat --no-mount "bind-paths,home,cwd,hostfs" --pwd /app)
+    AGENT_USER="$(apptainer "${common[@]}" "$IMAGE" /usr/local/bin/agent-entrypoint login-user)"
+    AGENT_LOGIN_HOME="$(apptainer "${common[@]}" "$IMAGE" /usr/local/bin/agent-entrypoint login-home)"
+
+    [[ "$AGENT_USER" =~ ^[A-Za-z0-9._-]+$ ]] || die 'could not determine a safe container login user'
+    [[ "$AGENT_LOGIN_HOME" == /* && "$AGENT_LOGIN_HOME" != *:* ]] ||
+        die 'could not determine the container login home'
+}
+
+ensure_image() {
+    load_lock
+    [[ -f "$IMAGE" ]] || die 'runtime image is missing; run ./agent pull'
+    [[ -f "$IMAGE_REF_FILE" ]] || die 'runtime image provenance is missing; run ./agent pull'
+    [[ "$(<"$IMAGE_REF_FILE")" == "$IMAGE_REF" ]] || die 'runtime image does not match image.lock; run ./agent pull'
+}
+
+resolve_ca_bundle() {
+    CA_BUNDLE=
+    if [[ -n "${AGENT_CA_BUNDLE:-}" ]]; then
+        [[ -f "$AGENT_CA_BUNDLE" ]] || die "AGENT_CA_BUNDLE does not exist: $AGENT_CA_BUNDLE"
+        CA_BUNDLE="$(readlink -f -- "$AGENT_CA_BUNDLE")"
+    fi
+}
+
+pull_image() {
+    need_command apptainer
+    load_optional_env
+    load_lock
+    resolve_ca_bundle
+    mkdir -p "$LOCAL"
+
+    local partial="$LOCAL/runtime.sif.partial"
+    rm -f -- "$partial"
+    if [[ -n "$CA_BUNDLE" ]]; then
+        SSL_CERT_FILE="$CA_BUNDLE" apptainer pull --force "$partial" "$IMAGE_REF"
+    else
+        apptainer pull --force "$partial" "$IMAGE_REF"
+    fi
+    mv -f -- "$partial" "$IMAGE"
+    printf '%s\n' "$IMAGE_REF" > "$IMAGE_REF_FILE"
+    chmod 0600 "$IMAGE_REF_FILE"
+
+    apptainer exec --compat --no-mount bind-paths,home,cwd,hostfs \
+        "$IMAGE" /usr/local/bin/agent-entrypoint check
+}
+
+write_gateway_token() {
+    local token_file="$LOCAL/gateway-token"
+    if [[ ! -s "$token_file" ]]; then
+        openssl rand -hex 32 > "$token_file"
+        chmod 0600 "$token_file"
+    fi
+    OPENCLAW_GATEWAY_TOKEN="$(<"$token_file")"
+}
+
+render_config() {
+    local target="$STATE/openclaw.json"
+    local temporary="$RUN_DIR/openclaw.json"
+    local channel_lower
+    channel_lower="${SLACK_CHANNEL_ID,,}"
+
+    sed \
+        -e "s/__OPENCLAW_GATEWAY_PORT__/$AGENT_GATEWAY_PORT/g" \
+        -e "s/__AGENT_USER__/$AGENT_USER/g" \
+        -e "s/__AGENT_WORKER_PORT__/$AGENT_WORKER_PORT/g" \
+        -e "s/__SLACK_CHANNEL_ID__/$SLACK_CHANNEL_ID/g" \
+        -e "s/__SLACK_CHANNEL_ID_LOWER__/$channel_lower/g" \
+        -e "s/__SLACK_ALLOWED_USER_ID__/$SLACK_ALLOWED_USER_ID/g" \
+        "$ROOT/openclaw.json.template" > "$temporary"
+    install -m 0600 "$temporary" "$target"
+}
+
+write_instance_state() {
+    local repository=null
+    local temporary="$RUN_DIR/instance.json"
+    if [[ -n "${GITHUB_REPOSITORY:-}" ]]; then
+        repository="\"$GITHUB_REPOSITORY\""
+    fi
+
+    cat > "$temporary" <<EOF
+{
+  "agent_id": "$AGENT_ID",
+  "slack_channel_id": "$SLACK_CHANNEL_ID",
+  "persistent_workspace": "/home/node/.openclaw/workspace",
+  "source_checkout": null,
+  "research_output_repository": $repository
+}
+EOF
+    install -D -m 0644 "$temporary" "$BOOTSTRAP/state/instance.json"
+
+    if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+        cat > "$RUN_DIR/slurm-job.json" <<EOF
+{
+  "job_id": "$SLURM_JOB_ID",
+  "node_list": "${SLURM_JOB_NODELIST:-unknown}",
+  "time_limit": "${SLURM_TIMELIMIT:-unknown}",
+  "end_time_epoch": "${SLURM_JOB_END_TIME:-unknown}"
+}
+EOF
+        install -D -m 0644 "$RUN_DIR/slurm-job.json" "$BOOTSTRAP/state/slurm-job.json"
+    else
+        rm -f -- "$BOOTSTRAP/state/slurm-job.json"
+    fi
+}
+
+sync_bootstrap() {
+    local source destination
+    shopt -s nullglob
+
+    for source in "$ROOT"/[A-Z]*.md; do
+        install -m 0644 "$source" "$BOOTSTRAP/$(basename "$source")"
+    done
+    [[ -f "$BOOTSTRAP/AGENTS.md" ]] || die 'AGENTS.md is missing'
+
+    for destination in "$WORKSPACE"/openclaw-ssh-*/workspace; do
+        [[ -d "$destination" ]] || continue
+        cp -a "$BOOTSTRAP/." "$destination/"
+    done
+    shopt -u nullglob
+}
+
+generate_bridge_keys() {
+    mkdir -p "$BRIDGE"
+    apptainer exec --compat --no-mount bind-paths,home,cwd,hostfs \
+        --bind "$BRIDGE:/bridge:rw" \
+        "$IMAGE" /usr/local/bin/agent-entrypoint keygen "$AGENT_WORKER_PORT"
+}
+
+prepare() {
+    need_command apptainer
+    need_command openssl
+    load_env
+    derive_runtime
+    ensure_image
+    resolve_ca_bundle
+    resolve_container_identity
+
+    umask 077
+    mkdir -p "$STATE" "$WORKSPACE" "$BOOTSTRAP/state" "$RUN_DIR" "$LOG_DIR"
+    write_gateway_token
+    render_config
+    write_instance_state
+    sync_bootstrap
+    generate_bridge_keys
+}
+
+write_env_line() {
+    local file="$1"
+    local name="$2"
+    local value="$3"
+    [[ "$value" != *$'\n'* ]] || die "$name must be one line"
+    printf '%s=%s\n' "$name" "$value" >> "$file"
+}
+
+write_runtime_env() {
+    GATEWAY_ENV="$RUN_DIR/gateway.env"
+    WORKER_ENV="$RUN_DIR/worker.env"
+    : > "$GATEWAY_ENV"
+    : > "$WORKER_ENV"
+    chmod 0600 "$GATEWAY_ENV" "$WORKER_ENV"
+
+    write_env_line "$GATEWAY_ENV" AGENT_BOX_ROLE gateway
+    write_env_line "$GATEWAY_ENV" SLACK_BOT_TOKEN "$SLACK_BOT_TOKEN"
+    write_env_line "$GATEWAY_ENV" SLACK_APP_TOKEN "$SLACK_APP_TOKEN"
+    write_env_line "$GATEWAY_ENV" OPENCLAW_GATEWAY_TOKEN "$OPENCLAW_GATEWAY_TOKEN"
+    write_env_line "$GATEWAY_ENV" OPENCLAW_STATE_DIR /home/node/.openclaw
+    write_env_line "$GATEWAY_ENV" OPENCLAW_CONFIG_PATH /home/node/.openclaw/openclaw.json
+
+    write_env_line "$WORKER_ENV" AGENT_BOX_ROLE worker
+    write_env_line "$WORKER_ENV" AGENT_WORKER_PORT "$AGENT_WORKER_PORT"
+    write_env_line "$WORKER_ENV" GITHUB_PAT "$GITHUB_PAT"
+    write_env_line "$WORKER_ENV" GITHUB_REPOSITORY "${GITHUB_REPOSITORY:-}"
+
+    if [[ "$AGENT_GPU" == nv ]]; then
+        write_env_line "$WORKER_ENV" LD_LIBRARY_PATH /.singularity.d/libs
+    fi
+    if [[ -n "$CA_BUNDLE" ]]; then
+        for file in "$GATEWAY_ENV" "$WORKER_ENV"; do
+            write_env_line "$file" SSL_CERT_FILE /run/agent-ca/ca.pem
+            write_env_line "$file" NODE_EXTRA_CA_CERTS /run/agent-ca/ca.pem
+            write_env_line "$file" REQUESTS_CA_BUNDLE /run/agent-ca/ca.pem
+            write_env_line "$file" GIT_SSL_CAINFO /run/agent-ca/ca.pem
+            write_env_line "$file" CURL_CA_BUNDLE /run/agent-ca/ca.pem
+        done
+    fi
+}
+
+build_apptainer_args() {
+    local common=(exec --compat --no-mount "bind-paths,home,cwd,hostfs" --pwd /app)
+
+    GATEWAY_ARGS=(
+        "${common[@]}"
+        --env-file "$GATEWAY_ENV"
+        --bind "$STATE:/home/node/.openclaw:rw"
+        --bind "$BOOTSTRAP:/gateway-workspace:ro"
+        --bind "$GATEWAY_BRIDGE:/run/agent-bridge:ro"
+    )
+    WORKER_ARGS=(
+        "${common[@]}"
+        --env-file "$WORKER_ENV"
+        --bind "$WORKER_BRIDGE:/run/agent-bridge:ro"
+        --bind "$WORKER_BRIDGE/home:$AGENT_LOGIN_HOME:ro"
+        --bind "$WORKSPACE:/home/node/.openclaw/workspace:rw"
+    )
+
+    case "$AGENT_GPU" in
+        nv) WORKER_ARGS+=(--nv) ;;
+        rocm) WORKER_ARGS+=(--rocm) ;;
+    esac
+
+    if [[ -n "$CA_BUNDLE" ]]; then
+        GATEWAY_ARGS+=(--bind "$CA_BUNDLE:/run/agent-ca/ca.pem:ro")
+        WORKER_ARGS+=(--bind "$CA_BUNDLE:/run/agent-ca/ca.pem:ro")
+    fi
+}
+
+prepare_commands() {
+    prepare
+    write_runtime_env
+    build_apptainer_args
+}
+
+gateway_cli() {
+    apptainer "${GATEWAY_ARGS[@]}" "$IMAGE" \
+        /usr/local/bin/agent-entrypoint openclaw "$@"
+}
+
+start_worker() {
+    apptainer "${WORKER_ARGS[@]}" "$IMAGE" \
+        /usr/local/bin/agent-entrypoint worker \
+        > >(tee -a "$LOG_DIR/worker.log") 2>&1 &
+    WORKER_PID=$!
+}
+
+probe_worker() {
+    apptainer "${GATEWAY_ARGS[@]}" "$IMAGE" \
+        /usr/local/bin/agent-entrypoint probe-worker "$AGENT_USER" "$AGENT_WORKER_PORT"
+}
+
+wait_for_worker() {
+    local attempt
+    for ((attempt = 1; attempt <= 30; attempt++)); do
+        if probe_worker >/dev/null 2>&1; then
+            return 0
+        fi
+        kill -0 "$WORKER_PID" 2>/dev/null || die 'worker stopped during startup; inspect .agent/logs/worker.log'
+        sleep 1
+    done
+    die 'worker did not accept the gateway SSH connection within 30 seconds'
+}
+
+clean_runtime_env() {
+    [[ -n "$GATEWAY_ENV" ]] && rm -f -- "$GATEWAY_ENV"
+    [[ -n "$WORKER_ENV" ]] && rm -f -- "$WORKER_ENV"
+}
+
+stop_children() {
+    local pid
+    trap - EXIT INT TERM
+    for pid in "$GATEWAY_PID" "$WORKER_PID"; do
+        [[ -n "$pid" ]] || continue
+        kill -TERM "$pid" 2>/dev/null || true
+    done
+    for pid in "$GATEWAY_PID" "$WORKER_PID"; do
+        [[ -n "$pid" ]] || continue
+        wait "$pid" 2>/dev/null || true
+    done
+    clean_runtime_env
+}
+
+init_agent() {
+    prepare
+    printf 'Initialised %s\n' "$AGENT_ID"
+    printf 'State: %s\n' "$STATE"
+    printf 'Workspace: %s\n' "$WORKSPACE"
+}
+
+auth_agent() {
+    prepare_commands
+    trap clean_runtime_env EXIT
+    gateway_cli config validate
+    gateway_cli models auth login --provider openai --device-code
+}
+
+validate_agent() {
+    local plugins
+    prepare_commands
+    trap stop_children EXIT INT TERM
+
+    gateway_cli config validate
+    plugins="$(gateway_cli plugins list --enabled)"
+    grep -qi codex <<<"$plugins" || die 'the Codex plugin is not enabled'
+    grep -qi slack <<<"$plugins" || die 'the Slack plugin is not enabled'
+    gateway_cli models status --check
+
+    start_worker
+    wait_for_worker
+    probe_worker
+    printf 'Validation passed.\n'
+}
+
+run_agent() {
+    local finished status
+    prepare_commands
+    trap stop_children EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+
+    start_worker
+    wait_for_worker
+    printf 'Worker ready on local port %s.\n' "$AGENT_WORKER_PORT"
+
+    apptainer "${GATEWAY_ARGS[@]}" "$IMAGE" \
+        /usr/local/bin/agent-entrypoint gateway \
+        > >(tee -a "$LOG_DIR/gateway.log") 2>&1 &
+    GATEWAY_PID=$!
+    printf 'Gateway running. Slack channel: %s\n' "$SLACK_CHANNEL_ID"
+
+    set +e
+    finished=
+    wait -n -p finished "$WORKER_PID" "$GATEWAY_PID"
+    status=$?
+    set -e
+    if [[ "$finished" == "$WORKER_PID" ]]; then
+        printf 'ERROR: worker stopped while the gateway was running.\n' >&2
+        return 1
+    fi
+    return "$status"
+}
+
+case "${1:-}" in
+    pull)
+        pull_image
+        ;;
+    init)
+        init_agent
+        ;;
+    auth)
+        auth_agent
+        ;;
+    validate)
+        validate_agent
+        ;;
+    run)
+        run_agent
+        ;;
+    -h|--help|help|'')
+        usage
+        ;;
+    *)
+        usage >&2
+        die "unknown command: $1"
+        ;;
+esac

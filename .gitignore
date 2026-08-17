@@ -1,6 +1,7 @@
 # Secrets - never commit.
 .env
 cluster.sbatch
+agent.sbatch
 *.token
 *.pem
 *.key
@@ -17,8 +18,8 @@ cluster.sbatch
 # Logs.
 *.log
 logs/*
-!logs/.gitkeep
-multiarch/results/
 
-# Local Docker/OpenClaw scratch state.
+# Local agent state and build scratch.
+.agent/
 .local/
+multiarch/results/

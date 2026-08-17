@@ -1,196 +1,90 @@
-# dr-clankenstein
+# Research agent box
 
-OpenClaw research-agent harness for EX3 Slurm jobs.
+This repository contains one research agent. Its Markdown files define the agent. Its local `.agent/` directory contains that agent's persistent state and workspace.
 
-Use one isolated instance per research project:
+## Design
 
-- one Slack app and channel;
-- one GitHub output repo;
-- one `.env`;
-- one workspace dir;
-- one OpenClaw state dir;
-- one source checkout;
-- one gateway port.
+The same image runs twice:
 
-Do not share Slack app tokens, workspace dirs, OpenClaw state dirs, or gateway ports between live agents.
+| Process | Receives | Does not receive |
+| --- | --- | --- |
+| Gateway | Slack tokens, Codex OAuth state, prompt files, SSH client key | Research workspace, GitHub token |
+| Worker | Research workspace, fine-grained GitHub token, SSH server key | Slack tokens, Codex OAuth state |
 
-## New Project Setup
+OpenClaw runs in the gateway. Every model-controlled shell and file operation is sent over the private loopback SSH connection to the worker. The `.env` file is read by the launcher and split into two temporary environment files; it is not mounted into either process.
 
-A new project is mostly `.env` work. First create the checkout, then collect the values in sections 2-4, then edit `.env` once in section 5.
+Apptainer starts both processes with host home, current directory, configured host filesystems, and administrator bind paths disabled. The only persistent writable mounts are gateway state and the worker workspace. Both processes retain outbound network access.
 
-### 1. Create the checkout
+## Image
 
-EX3, cwd: `~/D1/workspace`:
+GitHub Actions builds the image from a pinned OpenClaw commit. It installs the bundled Codex and Slack plugins and then adds the small worker toolset in `container/`.
+
+The workflow publishes a private `linux/amd64` image to this repository's GitHub Container Registry package. Its job summary prints an immutable `docker://...@sha256:...` reference. Put that reference in `image.lock` after each intentional image rebuild.
+
+Image publication uses the workflow's `GITHUB_TOKEN`. It does not use an agent token.
+
+Each machine needs one GitHub classic personal access token with `read:packages` to pull private images:
 
 ```bash
-cd ~/D1/workspace
-git clone git@github.com:prebenness/dr-clankenstein.git dr-clankenstein-PROJECT
-cd dr-clankenstein-PROJECT
+# Laptop WSL or EX3 login node; any directory.
+printf '%s' "$GHCR_READ_TOKEN" | apptainer registry login \
+  --username YOUR_GITHUB_USER \
+  --password-stdin docker://ghcr.io
+unset GHCR_READ_TOKEN
+```
+
+This machine credential stays in Apptainer's registry configuration. It is not passed to an agent. The per-agent fine-grained token only needs access to that agent's output repository.
+
+## New Agent
+
+Run these commands inside a Linux filesystem. On Windows, use a fresh clone under the WSL home directory rather than `/mnt/c`.
+
+```bash
+# Laptop WSL or EX3 login node; repository root.
 cp .env.example .env
-cp cluster.sbatch.example cluster.sbatch
 chmod 600 .env
 ```
 
-Use `PROJECT` as a short id, for example `bnn-timeseries`.
+Edit `.env`. Supply one Slack app's bot and app tokens, its channel ID, your Slack user ID, and one expendable fine-grained GitHub token. `GITHUB_REPOSITORY` may be left empty for a communication-only test.
 
-`cluster.sbatch` is local and ignored. Edit its `#SBATCH` lines only if this project needs different Slurm resources.
+```bash
+# Laptop WSL or EX3 login node; repository root.
+./agent pull
+./agent init
+./agent auth
+./agent validate
+./agent run
+```
 
-### 2. Choose local values
+`./agent auth` performs the one interactive Codex device login. `./agent run` stays in the foreground. Stop it with `Ctrl-C`.
 
-You need these project-unique `.env` entries:
+## Slurm
+
+The launcher never submits a job. Create and edit your own ignored copy:
+
+```bash
+# EX3 login node; repository root.
+cp agent.sbatch.example agent.sbatch
+```
+
+Set the partition, node constraint, GPU count, CPUs, memory, wall time, and `AGENT_GPU` in `agent.sbatch`. Then submit it yourself:
+
+```bash
+# EX3 login node; repository root.
+./agent init
+sbatch agent.sbatch
+```
+
+The batch script runs the same `./agent run` command used directly on a laptop or compute node. Use `AGENT_GPU=nv` for NVIDIA, `AGENT_GPU=rocm` for AMD, and `AGENT_GPU=none` for CPU-only use. The first image deliberately excludes ARM hosts and large machine-learning stacks.
+
+## Local Files
 
 ```text
-CLANKENSTEIN_ID=PROJECT
-CLANKENSTEIN_WORKSPACE_DIR=/home/prebenmn/D1/agent-workspaces/PROJECT
-CLANKENSTEIN_OPENCLAW_DIR=/home/prebenmn/D1/openclaw-state/PROJECT
-CLANKENSTEIN_GATEWAY_PORT=18790
-OPENCLAW_GATEWAY_TOKEN=<random hex>
+.env                         host-side agent credentials
+.agent/gateway-state/        OpenClaw sessions and Codex OAuth state
+.agent/workspace/            the worker's only persistent writable directory
+.agent/logs/                 launcher, gateway, and worker logs
+AGENTS.md, SOUL.md, ...      user-written agent instructions
 ```
 
-EX3, cwd: project checkout:
-
-```bash
-openssl rand -hex 32
-```
-
-Use a unique gateway port if two live projects may land on the same node. Leave image settings at their defaults unless setup reports a missing image.
-
-### 3. Create the Slack app and channel
-
-1. Open `https://api.slack.com/apps`.
-2. Click `Create New App`.
-3. Choose `From an app manifest`.
-4. Pick the Slack workspace.
-5. Paste the contents of `slack-app-manifest.json`.
-6. Click through `Next` -> `Create`.
-
-Create the app token:
-
-1. Open `Basic Information`.
-2. Under `App-Level Tokens`, click `Generate Token and Scopes`.
-3. Add the scope `connections:write`.
-4. Generate the token.
-
-Create the bot token:
-
-1. Open `Install App`.
-2. Click `Install to Workspace`.
-3. Copy `Bot User OAuth Token`.
-
-Create or choose the project channel:
-
-1. Invite the Slack app to the channel.
-2. Right-click the channel in Slack and copy the channel link.
-3. The channel id is the final `C...` part of the link.
-
-You need these `.env` entries:
-
-```text
-SLACK_APP_TOKEN=xapp-...
-SLACK_BOT_TOKEN=xoxb-...
-SLACK_CHANNEL_ID=C...
-SLACK_CHANNEL_NAME=dr-clankenstein-PROJECT
-```
-
-### 4. Create the output repo and GitHub token
-
-You need these `.env` entries:
-
-```text
-RUNS_REPO_URL=https://github.com/prebenness/PROJECT-runs.git
-GITHUB_PAT=github_pat_...
-```
-
-`GITHUB_PAT` must have contents read/write access to that output repo.
-
-Create the token on GitHub:
-
-1. Create the output repo, for example `prebenness/PROJECT-runs`.
-2. Open GitHub `Settings` -> `Developer settings` -> `Personal access tokens` -> `Fine-grained tokens`.
-3. Click `Generate new token`.
-4. Set `Resource owner` to `prebenness`.
-5. Set `Repository access` to `Only select repositories`, then select `PROJECT-runs`.
-6. Under `Repository permissions`, set `Contents` to `Read and write`.
-7. Generate and copy the token.
-
-Do not put the token in `RUNS_REPO_URL`.
-
-### 5. Edit `.env`, then run setup and auth
-
-Now fill `.env` with the values from sections 2-4.
-
-EX3, cwd: project checkout:
-
-```bash
-nano .env
-bash setup-project.sh
-bash auth-codex.sh login
-bash auth-codex.sh list
-bash auth-codex.sh probe
-```
-
-`setup-project.sh` creates the workspace, OpenClaw state dir, rendered config, git helper, `state/instance.json`, and plugin registry.
-
-`auth-codex.sh login` starts the ChatGPT device-code login used by the Codex runtime.
-
-`auth-codex.sh list` checks the auth profile in this project's OpenClaw state dir.
-
-`auth-codex.sh probe` checks that OpenClaw can reach the configured OpenAI model route with that profile.
-
-A fresh config may print `Config write anomaly ... missing-meta-before-write`; OpenClaw is writing metadata, not failing auth.
-
-### 6. Launch
-
-EX3, cwd: project checkout:
-
-```bash
-sbatch cluster.sbatch
-squeue -u prebenmn
-```
-
-The job writes `state/slurm-job.json` in the project workspace and logs under `logs/`.
-
-## Relaunch
-
-EX3, cwd: project checkout:
-
-```bash
-git pull
-sbatch cluster.sbatch
-```
-
-## Change Settings
-
-If you change Slack channel id, allowed user, output repo, or gateway port, rerun setup:
-
-EX3, cwd: project checkout:
-
-```bash
-CLANKENSTEIN_RENDER_CONFIG=1 bash setup-project.sh
-```
-
-If Codex auth breaks after regenerating config, rerun:
-
-EX3, cwd: project checkout:
-
-```bash
-bash auth-codex.sh login
-```
-
-Slurm resources are set by the `#SBATCH` lines in the ignored local `cluster.sbatch`. `cluster.sbatch.example` is the tracked template.
-
-## Build Images
-
-Only needed when the container definition or OpenClaw version changes.
-
-EX3 amd64 node, cwd: project checkout:
-
-```bash
-bash multiarch/build-agent-images.sh --only amd64
-```
-
-EX3 arm64 Slurm build, cwd: project checkout:
-
-```bash
-sbatch --partition=gh200q --export=ALL,BUILD_AGENT_TARGET=arm64 multiarch/build-agent-image.sbatch
-```
+Do not copy `.agent/gateway-state/` into the worker workspace. It contains the protected Codex OAuth state.

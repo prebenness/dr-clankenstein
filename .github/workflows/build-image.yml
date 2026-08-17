@@ -1,0 +1,89 @@
+name: Build agent image
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - container/**
+      - .github/workflows/build-image.yml
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  OPENCLAW_COMMIT: 0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c
+  OPENCLAW_VERSION: 2026.7.1
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out agent repository
+        uses: actions/checkout@v4
+
+      - name: Check out pinned OpenClaw source
+        uses: actions/checkout@v4
+        with:
+          repository: openclaw/openclaw
+          ref: ${{ env.OPENCLAW_COMMIT }}
+          path: openclaw-source
+
+      - name: Verify OpenClaw version
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          actual="$(jq -r .version openclaw-source/package.json)"
+          test "$actual" = "$OPENCLAW_VERSION"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build pinned OpenClaw base
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker build \
+            --build-arg OPENCLAW_EXTENSIONS=codex,slack,openai,memory-core \
+            --tag openclaw-base:local \
+            openclaw-source
+
+      - name: Build and push runtime image
+        id: image
+        shell: bash
+        env:
+          REPOSITORY: ${{ github.repository }}
+          REVISION: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          image="ghcr.io/${REPOSITORY,,}-runtime"
+          tag="sha-${REVISION}"
+          ref="$image:$tag"
+
+          docker build \
+            --build-arg OPENCLAW_BASE_IMAGE=openclaw-base:local \
+            --build-arg IMAGE_SOURCE="https://github.com/$REPOSITORY" \
+            --build-arg IMAGE_REVISION="$REVISION" \
+            --file container/Dockerfile \
+            --tag "$ref" \
+            .
+
+          docker push "$ref" 2>&1 | tee /tmp/image-push.log
+          digest="$(sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' /tmp/image-push.log | tail -n 1)"
+          test -n "$digest"
+          printf 'ref=%s@%s\n' "$image" "$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Record immutable image reference
+        shell: bash
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+        run: |
+          {
+            printf '## Runtime image\n\n'
+            printf '```text\nIMAGE_REF=docker://%s\n```\n' "$IMAGE_REF"
+            printf '\nOpenClaw `%s` at commit `%s`.\n' "$OPENCLAW_VERSION" "$OPENCLAW_COMMIT"
+          } >> "$GITHUB_STEP_SUMMARY"
