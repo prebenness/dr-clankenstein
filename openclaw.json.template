@@ -15,6 +15,7 @@
   agents: {
     defaults: {
       workspace: "/gateway-workspace",
+      skipBootstrap: true,
       model: {
         primary: "openai/gpt-5.6-sol",
       },
