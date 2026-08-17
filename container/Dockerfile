@@ -42,10 +42,8 @@ RUN set -eux; \
     test -f /opt/openclaw-plugins/slack/openclaw.plugin.json; \
     test "$(node -p "require('/opt/openclaw-plugins/slack/package.json').version")" = "$OPENCLAW_VERSION"
 
-ARG IMAGE_SOURCE=https://github.com/prebenness/dr-clankenstein
 ARG IMAGE_REVISION=unknown
-LABEL org.opencontainers.image.source="${IMAGE_SOURCE}" \
-      org.opencontainers.image.revision="${IMAGE_REVISION}" \
+LABEL org.opencontainers.image.revision="${IMAGE_REVISION}" \
       org.opencontainers.image.title="Research agent runtime"
 
 ENTRYPOINT ["/usr/bin/tini", "-s", "--", "/usr/local/bin/agent-entrypoint"]

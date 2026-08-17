@@ -67,7 +67,6 @@ jobs:
           docker build \
             --build-arg OPENCLAW_BASE_IMAGE=openclaw-base:local \
             --build-arg OPENCLAW_VERSION="$OPENCLAW_VERSION" \
-            --build-arg IMAGE_SOURCE="https://github.com/$REPOSITORY" \
             --build-arg IMAGE_REVISION="$REVISION" \
             --file container/Dockerfile \
             --tag "$ref" \
@@ -76,6 +75,25 @@ jobs:
           docker push "$ref" 2>&1 | tee /tmp/image-push.log
           digest="$(sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' /tmp/image-push.log | tail -n 1)"
           test -n "$digest"
+
+          token_status="$(curl --silent --show-error \
+            --output /tmp/anonymous-token.json \
+            --write-out '%{http_code}' \
+            "https://ghcr.io/token?scope=repository:${image#ghcr.io/}:pull&service=ghcr.io")"
+          if test "$token_status" = 200; then
+            anonymous_token="$(jq -er .token /tmp/anonymous-token.json)"
+            manifest_status="$(curl --silent --show-error \
+              --output /dev/null \
+              --write-out '%{http_code}' \
+              --header "Authorization: Bearer $anonymous_token" \
+              --header 'Accept: application/vnd.oci.image.manifest.v1+json' \
+              "https://ghcr.io/v2/${image#ghcr.io/}/manifests/$digest")"
+            if test "$manifest_status" = 200; then
+              echo 'The runtime image is anonymously accessible.' >&2
+              exit 1
+            fi
+          fi
+
           printf 'ref=%s@%s\n' "$image" "$digest" >> "$GITHUB_OUTPUT"
 
       - name: Record immutable image reference
