@@ -124,12 +124,12 @@ probe_worker() {
     local port="${2:?worker port is required}"
     local host_sentinel="${3:?host sentinel path is required}"
     local host_env_file="${4:?host environment path is required}"
-    local host_home="${5:?host home path is required}"
-    local sentinel_q env_q home_q command
+    local host_private_file="${5:?host private file path is required}"
+    local sentinel_q env_q private_q command
 
     printf -v sentinel_q '%q' "$host_sentinel"
     printf -v env_q '%q' "$host_env_file"
-    printf -v home_q '%q' "$host_home"
+    printf -v private_q '%q' "$host_private_file"
     # These variables expand in the worker shell reached over SSH.
     # shellcheck disable=SC2016
     printf -v command '%s' \
@@ -145,7 +145,7 @@ probe_worker() {
         ' && test ! -e /home/node/.openclaw/openclaw.json'
     command+=" && test ! -e $sentinel_q"
     command+=" && test ! -e $env_q"
-    command+=" && test ! -e $home_q"
+    command+=" && test ! -e $private_q"
     command+=' && printf "worker boundary ok\\n"'
 
     worker_ssh "$user" "$port" "$command"
