@@ -26,7 +26,7 @@ keygen() {
         ssh-keygen -y -f "$gateway_dir/client_key" > "$gateway_dir/client_key.pub"
     fi
     if [[ ! -f "$worker_dir/host_key" ]]; then
-        dropbearkey -t ed25519 -f "$worker_dir/host_key" >/dev/null
+        dropbearkey -t ed25519 -f "$worker_dir/host_key" >/dev/null 2>&1
     fi
 
     printf '%s %s\n' \
@@ -120,6 +120,8 @@ probe_worker() {
 
 case "${1:-check}" in
     check)
+        [[ -f /opt/openclaw-plugins/slack/openclaw.plugin.json ]] ||
+            die 'the Slack plugin is missing from the image'
         node /app/openclaw.mjs --version
         git --version
         dropbear -V

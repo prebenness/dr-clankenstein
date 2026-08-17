@@ -161,6 +161,9 @@
   plugins: {
     enabled: true,
     allow: ["slack", "openai", "codex", "memory-core"],
+    load: {
+      paths: ["/opt/openclaw-plugins/slack"],
+    },
     entries: {
       openai: { enabled: true },
       slack: { enabled: true },
