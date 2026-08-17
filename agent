@@ -107,7 +107,7 @@ derive_runtime() {
 }
 
 resolve_container_identity() {
-    local common=(exec --compat --no-mount "bind-paths,home,cwd,hostfs" --pwd /app)
+    local common=(exec --compat --cleanenv --no-mount "bind-paths,home,cwd,hostfs" --pwd /app)
     AGENT_USER="$(apptainer "${common[@]}" "$IMAGE" /usr/local/bin/agent-entrypoint login-user)"
     AGENT_LOGIN_HOME="$(apptainer "${common[@]}" "$IMAGE" /usr/local/bin/agent-entrypoint login-home)"
 
@@ -149,7 +149,7 @@ pull_image() {
     printf '%s\n' "$IMAGE_REF" > "$IMAGE_REF_FILE"
     chmod 0600 "$IMAGE_REF_FILE"
 
-    apptainer exec --compat --no-mount bind-paths,home,cwd,hostfs --pwd /app \
+    apptainer exec --compat --cleanenv --no-mount bind-paths,home,cwd,hostfs --pwd /app \
         "$IMAGE" /usr/local/bin/agent-entrypoint check
 }
 
@@ -230,7 +230,7 @@ sync_bootstrap() {
 
 generate_bridge_keys() {
     mkdir -p "$BRIDGE"
-    apptainer exec --compat --no-mount bind-paths,home,cwd,hostfs --pwd /app \
+    apptainer exec --compat --cleanenv --no-mount bind-paths,home,cwd,hostfs --pwd /app \
         --bind "$BRIDGE:/bridge:rw" \
         "$IMAGE" /usr/local/bin/agent-entrypoint keygen "$AGENT_WORKER_PORT"
 }
@@ -295,7 +295,7 @@ write_runtime_env() {
 }
 
 build_apptainer_args() {
-    local common=(exec --compat --no-mount "bind-paths,home,cwd,hostfs" --pwd /app)
+    local common=(exec --compat --cleanenv --no-mount "bind-paths,home,cwd,hostfs" --pwd /app)
 
     GATEWAY_ARGS=(
         "${common[@]}"

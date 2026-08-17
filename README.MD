@@ -17,7 +17,7 @@ Apptainer starts both processes with host home, current directory, configured ho
 
 ## Image
 
-GitHub Actions builds the image from a pinned OpenClaw commit. It installs the bundled Codex and Slack plugins and then adds the small worker toolset in `container/`.
+GitHub Actions builds the image from a pinned OpenClaw commit. It includes the bundled Codex plugin, installs the matching external Slack package, and adds the small worker toolset in `container/`.
 
 The workflow publishes a private `linux/amd64` image to this repository's GitHub Container Registry package. Its job summary prints an immutable `docker://...@sha256:...` reference. Put that reference in `image.lock` after each intentional image rebuild.
 
