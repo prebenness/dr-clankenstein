@@ -15,6 +15,7 @@ RUN_DIR="$LOCAL/run"
 LOG_DIR="$LOCAL/logs"
 ENV_FILE="${AGENT_ENV_FILE:-$ROOT/.env}"
 LOCK_FILE="$ROOT/image.lock"
+REGISTRY_AUTH_FILE="${AGENT_REGISTRY_AUTH_FILE:-$HOME/.apptainer/agent-registry-auth.json}"
 HOST_SENTINEL="$RUN_DIR/host-only-sentinel"
 
 WORKER_PID=
@@ -139,14 +140,17 @@ pull_image() {
     load_optional_env
     load_lock
     resolve_ca_bundle
+    [[ -f "$REGISTRY_AUTH_FILE" ]] ||
+        die "registry authentication is missing: $REGISTRY_AUTH_FILE"
     mkdir -p "$LOCAL"
 
     local partial="$LOCAL/runtime.sif.partial"
     rm -f -- "$partial"
     if [[ -n "$CA_BUNDLE" ]]; then
-        SSL_CERT_FILE="$CA_BUNDLE" apptainer pull --force "$partial" "$IMAGE_REF"
+        SSL_CERT_FILE="$CA_BUNDLE" apptainer pull --force \
+            --authfile "$REGISTRY_AUTH_FILE" "$partial" "$IMAGE_REF"
     else
-        apptainer pull --force "$partial" "$IMAGE_REF"
+        apptainer pull --force --authfile "$REGISTRY_AUTH_FILE" "$partial" "$IMAGE_REF"
     fi
     mv -f -- "$partial" "$IMAGE"
     printf '%s\n' "$IMAGE_REF" > "$IMAGE_REF_FILE"

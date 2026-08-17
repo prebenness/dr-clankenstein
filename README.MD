@@ -38,7 +38,7 @@ After a successful build, put the reported `docker://...@sha256:...` reference i
 | Credential | Quantity | Location | Visible to |
 | --- | --- | --- | --- |
 | GHCR publisher PAT | One shared token | GitHub Actions secret | Image workflow only |
-| GHCR reader PAT | One shared token | Each host's Apptainer registry config | Host-side `pull` only |
+| GHCR reader PAT | One shared token | Each host's Apptainer auth file | Host-side `pull` only |
 | Slack bot and app tokens | One pair per agent | `.env` | Gateway |
 | Fine-grained output-repository PAT | One per agent | `.env` | Worker |
 | Codex OAuth state | One login per installation | `.agent/gateway-state/` | Gateway |
@@ -47,13 +47,15 @@ The GHCR reader token must be a classic PAT with `read:packages`. Authenticate o
 
 ```bash
 # Laptop WSL or EX3 login node; any directory.
+mkdir -p "$HOME/.apptainer"
 printf '%s' "$GHCR_READ_TOKEN" | apptainer registry login \
+  --authfile "$HOME/.apptainer/agent-registry-auth.json" \
   --username YOUR_GITHUB_USER \
   --password-stdin docker://ghcr.io
 unset GHCR_READ_TOKEN
 ```
 
-The registry credential remains in Apptainer's host-side configuration. It is not mounted into either agent instance.
+The launcher uses that explicit auth file when it pulls the private image. This avoids Docker Desktop credential helpers under WSL. The file is never mounted into either agent instance.
 
 ## New agent
 
