@@ -20,10 +20,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out agent repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Check out pinned OpenClaw source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: openclaw/openclaw
           ref: ${{ env.OPENCLAW_COMMIT }}
@@ -37,7 +37,7 @@ jobs:
           test "$actual" = "$OPENCLAW_VERSION"
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
