@@ -60,7 +60,7 @@ jobs:
           REVISION: ${{ github.sha }}
         run: |
           set -Eeuo pipefail
-          image="ghcr.io/${REPOSITORY,,}-runtime"
+          image="ghcr.io/${REPOSITORY,,}-box"
           tag="sha-${REVISION}"
           ref="$image:$tag"
 
