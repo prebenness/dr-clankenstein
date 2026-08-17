@@ -1,29 +1,49 @@
 # Research agent box
 
-This repository contains one research agent. Its Markdown files define the agent. Its local `.agent/` directory contains that agent's persistent state and workspace.
+This repository contains one research agent. The tracked Markdown files define its behaviour. The ignored `.agent/` directory contains its local state and persistent research workspace.
 
-## Design
+## Runtime boundary
 
-The same image runs twice:
+The same immutable image runs as two separate Apptainer instances:
 
-| Process | Receives | Does not receive |
+| Instance | Receives | Does not receive |
 | --- | --- | --- |
-| Gateway | Slack tokens, Codex OAuth state, prompt files, SSH client key | Research workspace, GitHub token |
-| Worker | Research workspace, fine-grained GitHub token, SSH server key | Slack tokens, Codex OAuth state |
+| Gateway | Slack tokens, Codex OAuth state, Markdown instructions, SSH client key | Research workspace, GitHub output token |
+| Worker | Research workspace, fine-grained GitHub output token, SSH server key | Slack tokens, Codex OAuth state, host files |
 
-OpenClaw runs in the gateway. Every model-controlled shell and file operation is sent over the private loopback SSH connection to the worker. The `.env` file is read by the launcher and split into two temporary environment files; it is not mounted into either process.
+OpenClaw and the Slack connection run in the gateway. Model-controlled shell, process and file tools are sent over a loopback SSH connection to the worker. The model does not receive a shell in the gateway.
 
-Apptainer starts both processes with host home, current directory, configured host filesystems, and administrator bind paths disabled. The only persistent writable mounts are gateway state and the worker workspace. Both processes retain outbound network access.
+The launcher reads `.env` on the host and gives each instance only its assigned variables. Temporary environment files are removed after process startup. Apptainer disables automatic host-home, current-directory, host-filesystem and administrator bind mounts. The worker's only persistent writable mount is `.agent/workspace/`.
+
+Both instances use the host network stack for outbound access. The design isolates host files, credentials, environment and processes. It does not filter network destinations.
 
 ## Image
 
-GitHub Actions builds the image from a pinned OpenClaw commit. It includes the bundled Codex plugin, installs the matching external Slack package, and adds the small worker toolset in `container/`.
+GitHub Actions builds the OCI image. This is the only place Docker is used. A laptop or EX3 installation needs Apptainer and does not need Docker, OpenClaw, npm or Codex installed on the host.
 
-The workflow publishes a private `linux/amd64` image to this repository's GitHub Container Registry package. Its job summary prints an immutable `docker://...@sha256:...` reference. Put that reference in `image.lock` after each intentional image rebuild.
+The manual `Build agent image` workflow:
 
-Image publication uses the workflow's `GITHUB_TOKEN`. It does not use an agent token.
+1. Builds the pinned OpenClaw source and matching Slack plugin.
+2. Publishes `ghcr.io/prebenness/dr-clankenstein-runtime-v2` using the `GHCR_PUBLISH_TOKEN` Actions secret.
+3. Refuses an existing package unless GitHub reports it as private.
+4. Verifies the published package is private and rejects anonymous manifest access.
+5. Prints the immutable image digest in the workflow summary.
 
-Each machine needs one GitHub classic personal access token with `read:packages` to pull private images:
+`GHCR_PUBLISH_TOKEN` must be a classic GitHub personal access token with `write:packages` and no repository scope. The workflow deliberately does not use the public source repository's `GITHUB_TOKEN` to publish the package.
+
+After a successful build, put the reported `docker://...@sha256:...` reference in `image.lock`. Runtime startup never installs or updates packages.
+
+## Credentials
+
+| Credential | Quantity | Location | Visible to |
+| --- | --- | --- | --- |
+| GHCR publisher PAT | One shared token | GitHub Actions secret | Image workflow only |
+| GHCR reader PAT | One shared token | Each host's Apptainer registry config | Host-side `pull` only |
+| Slack bot and app tokens | One pair per agent | `.env` | Gateway |
+| Fine-grained output-repository PAT | One per agent | `.env` | Worker |
+| Codex OAuth state | One login per installation | `.agent/gateway-state/` | Gateway |
+
+The GHCR reader token must be a classic PAT with `read:packages`. Authenticate once on each machine:
 
 ```bash
 # Laptop WSL or EX3 login node; any directory.
@@ -33,22 +53,22 @@ printf '%s' "$GHCR_READ_TOKEN" | apptainer registry login \
 unset GHCR_READ_TOKEN
 ```
 
-This machine credential stays in Apptainer's registry configuration. It is not passed to an agent. The per-agent fine-grained token only needs access to that agent's output repository.
+The registry credential remains in Apptainer's host-side configuration. It is not mounted into either agent instance.
 
-## New Agent
+## New agent
 
-Run these commands inside a Linux filesystem. On Windows, use a fresh clone under the WSL home directory rather than `/mnt/c`.
+Use a clone in a Linux filesystem. On Windows, clone under the WSL home directory rather than `/mnt/c`.
+
+1. Write `AGENTS.md`, `SOUL.md`, `USER.md` and `HEARTBEAT.md`.
+2. Create one Slack app from `slack-app-manifest.json` and add it to one private channel.
+3. Create one fine-grained GitHub token with access only to the agent's output repository.
+4. Create `.env` from the example and enter the credentials and identifiers.
+5. Run the five launcher commands below.
 
 ```bash
 # Laptop WSL or EX3 login node; repository root.
 cp .env.example .env
 chmod 600 .env
-```
-
-Edit `.env`. Supply one Slack app's bot and app tokens, its channel ID, your Slack user ID, and one expendable fine-grained GitHub token. `GITHUB_REPOSITORY` may be left empty for a communication-only test.
-
-```bash
-# Laptop WSL or EX3 login node; repository root.
 ./agent pull
 ./agent init
 ./agent auth
@@ -56,34 +76,35 @@ Edit `.env`. Supply one Slack app's bot and app tokens, its channel ID, your Sla
 ./agent run
 ```
 
-`./agent auth` performs the one interactive Codex device login. `./agent run` stays in the foreground. Stop it with `Ctrl-C`.
+`auth` performs one interactive Codex device login. `validate` checks configuration, model authentication, required plugins, internet access, repository access and the gateway/worker mount boundary. `run` stays in the foreground and stops both instances on `Ctrl-C`.
+
+To discard an installation's generated state while preserving its tracked files and `.env`:
+
+```bash
+# Laptop WSL or EX3; repository root. Stop the agent first.
+rm -rf -- .agent
+```
 
 ## Slurm
 
-The launcher never submits a job. Create and edit your own ignored copy:
+The launcher never submits a job. Create an ignored batch file and edit its resource directives yourself:
 
 ```bash
 # EX3 login node; repository root.
 cp agent.sbatch.example agent.sbatch
 ```
 
-Set the partition, node constraint, GPU count, CPUs, memory, wall time, and `AGENT_GPU` in `agent.sbatch`. Then submit it yourself:
+Set the partition, node constraint, GPU count, CPUs, memory, wall time and `AGENT_GPU`. Submit it yourself with `sbatch agent.sbatch`.
 
-```bash
-# EX3 login node; repository root.
-./agent init
-sbatch agent.sbatch
-```
+The batch file runs the same `./agent run` command used directly. Set `AGENT_GPU=nv` for NVIDIA, `AGENT_GPU=rocm` for AMD and `AGENT_GPU=none` for CPU-only use. The current image supports x86-64 hosts and deliberately excludes large machine-learning stacks.
 
-The batch script runs the same `./agent run` command used directly on a laptop or compute node. Use `AGENT_GPU=nv` for NVIDIA, `AGENT_GPU=rocm` for AMD, and `AGENT_GPU=none` for CPU-only use. The first image deliberately excludes ARM hosts and large machine-learning stacks.
-
-## Local Files
+## Local files
 
 ```text
 .env                         host-side agent credentials
 .agent/gateway-state/        OpenClaw sessions and Codex OAuth state
-.agent/workspace/            the worker's only persistent writable directory
-.agent/logs/                 launcher, gateway, and worker logs
+.agent/workspace/            worker's persistent writable directory
+.agent/logs/                 gateway, worker and scheduler logs
 AGENTS.md, SOUL.md, ...      user-written agent instructions
 ```
 

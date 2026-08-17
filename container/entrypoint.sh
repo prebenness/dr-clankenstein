@@ -98,11 +98,12 @@ openclaw_cli() {
     exec node /app/openclaw.mjs "$@"
 }
 
-probe_worker() {
+worker_ssh() {
     local user="${1:?worker user is required}"
     local port="${2:?worker port is required}"
+    shift 2
 
-    exec ssh \
+    ssh \
         -F /dev/null \
         -T \
         -p "$port" \
@@ -115,7 +116,72 @@ probe_worker() {
         -o UpdateHostKeys=no \
         -o UserKnownHostsFile=/run/agent-bridge/known_hosts \
         "$user@127.0.0.1" \
-        'test "${AGENT_BOX_ROLE:-}" = worker && test -n "${GITHUB_PAT:-}" && test -z "${SLACK_BOT_TOKEN:-}" && test -z "${SLACK_APP_TOKEN:-}" && test -w /home/node/.openclaw/workspace && test ! -d /home/node/.openclaw/agents && printf "worker boundary ok\n"'
+        "$@"
+}
+
+probe_worker() {
+    local user="${1:?worker user is required}"
+    local port="${2:?worker port is required}"
+    local host_sentinel="${3:?host sentinel path is required}"
+    local host_env_file="${4:?host environment path is required}"
+    local host_home="${5:?host home path is required}"
+    local sentinel_q env_q home_q command
+
+    printf -v sentinel_q '%q' "$host_sentinel"
+    printf -v env_q '%q' "$host_env_file"
+    printf -v home_q '%q' "$host_home"
+    # These variables expand in the worker shell reached over SSH.
+    # shellcheck disable=SC2016
+    printf -v command '%s' \
+        'test "${AGENT_BOX_ROLE:-}" = worker' \
+        ' && test -n "${GITHUB_PAT:-}"' \
+        ' && test -z "${SLACK_BOT_TOKEN:-}"' \
+        ' && test -z "${SLACK_APP_TOKEN:-}"' \
+        ' && test -z "${OPENCLAW_GATEWAY_TOKEN:-}"' \
+        ' && test -z "${CODEX_HOME:-}"' \
+        ' && test "$HOME" = /tmp/agent-home' \
+        ' && test -w /home/node/.openclaw/workspace' \
+        ' && test ! -e /gateway-workspace' \
+        ' && test ! -e /home/node/.openclaw/openclaw.json'
+    command+=" && test ! -e $sentinel_q"
+    command+=" && test ! -e $env_q"
+    command+=" && test ! -e $home_q"
+    command+=' && printf "worker boundary ok\\n"'
+
+    worker_ssh "$user" "$port" "$command"
+}
+
+probe_worker_internet() {
+    local user="${1:?worker user is required}"
+    local port="${2:?worker port is required}"
+
+    worker_ssh "$user" "$port" \
+        'wget --quiet --spider --timeout=15 https://api.github.com/ && printf "worker internet ok\n"'
+}
+
+probe_worker_repository() {
+    local user="${1:?worker user is required}"
+    local port="${2:?worker port is required}"
+    local repository="${3:?repository is required}"
+    local repository_q
+
+    printf -v repository_q '%q' "$repository"
+    worker_ssh "$user" "$port" \
+        "test \"\${GITHUB_REPOSITORY:-}\" = $repository_q && git ls-remote \"https://github.com/\$GITHUB_REPOSITORY.git\" HEAD >/dev/null && printf 'worker repository ok\\n'"
+}
+
+probe_gateway() {
+    local host_workspace="${1:?host workspace path is required}"
+
+    [[ "${AGENT_BOX_ROLE:-}" == gateway ]] || die 'gateway role is missing'
+    [[ -n "${SLACK_BOT_TOKEN:-}" ]] || die 'Slack bot token is missing from the gateway'
+    [[ -n "${SLACK_APP_TOKEN:-}" ]] || die 'Slack app token is missing from the gateway'
+    [[ -z "${GITHUB_PAT:-}" ]] || die 'GitHub token is visible in the gateway'
+    [[ -w /home/node/.openclaw ]] || die 'gateway state is not writable'
+    [[ -r /gateway-workspace/AGENTS.md ]] || die 'gateway instructions are not readable'
+    [[ ! -w /gateway-workspace/AGENTS.md ]] || die 'gateway instructions are writable'
+    [[ ! -e "$host_workspace" ]] || die 'worker workspace host path is visible in the gateway'
+    printf 'gateway boundary ok\n'
 }
 
 case "${1:-check}" in
@@ -155,6 +221,18 @@ case "${1:-check}" in
     probe-worker)
         shift
         probe_worker "$@"
+        ;;
+    probe-worker-internet)
+        shift
+        probe_worker_internet "$@"
+        ;;
+    probe-worker-repository)
+        shift
+        probe_worker_repository "$@"
+        ;;
+    probe-gateway)
+        shift
+        probe_gateway "$@"
         ;;
     *)
         die "unknown entrypoint command: $1"

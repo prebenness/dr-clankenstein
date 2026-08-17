@@ -15,11 +15,14 @@ RUN_DIR="$LOCAL/run"
 LOG_DIR="$LOCAL/logs"
 ENV_FILE="${AGENT_ENV_FILE:-$ROOT/.env}"
 LOCK_FILE="$ROOT/image.lock"
+HOST_SENTINEL="$RUN_DIR/host-only-sentinel"
 
 WORKER_PID=
 GATEWAY_PID=
 WORKER_ENV=
 GATEWAY_ENV=
+HOST_ENV_FILE=
+HOST_HOME=
 
 die() {
     printf 'ERROR: %s\n' "$*" >&2
@@ -239,6 +242,8 @@ prepare() {
     need_command apptainer
     need_command openssl
     load_env
+    HOST_ENV_FILE="$(readlink -f -- "$ENV_FILE")"
+    HOST_HOME="$(readlink -f -- "${HOME:?HOME is required}")"
     derive_runtime
     ensure_image
     resolve_ca_bundle
@@ -246,6 +251,7 @@ prepare() {
 
     umask 077
     mkdir -p "$STATE" "$WORKSPACE" "$BOOTSTRAP/state" "$RUN_DIR" "$LOG_DIR"
+    rm -f -- "$RUN_DIR/gateway.env" "$RUN_DIR/worker.env" "$HOST_SENTINEL"
     write_gateway_token
     render_config
     write_instance_state
@@ -261,12 +267,10 @@ write_env_line() {
     printf '%s=%s\n' "$name" "$value" >> "$file"
 }
 
-write_runtime_env() {
+write_gateway_env() {
     GATEWAY_ENV="$RUN_DIR/gateway.env"
-    WORKER_ENV="$RUN_DIR/worker.env"
     : > "$GATEWAY_ENV"
-    : > "$WORKER_ENV"
-    chmod 0600 "$GATEWAY_ENV" "$WORKER_ENV"
+    chmod 0600 "$GATEWAY_ENV"
 
     write_env_line "$GATEWAY_ENV" AGENT_BOX_ROLE gateway
     write_env_line "$GATEWAY_ENV" SLACK_BOT_TOKEN "$SLACK_BOT_TOKEN"
@@ -274,6 +278,20 @@ write_runtime_env() {
     write_env_line "$GATEWAY_ENV" OPENCLAW_GATEWAY_TOKEN "$OPENCLAW_GATEWAY_TOKEN"
     write_env_line "$GATEWAY_ENV" OPENCLAW_STATE_DIR /home/node/.openclaw
     write_env_line "$GATEWAY_ENV" OPENCLAW_CONFIG_PATH /home/node/.openclaw/openclaw.json
+
+    if [[ -n "$CA_BUNDLE" ]]; then
+        write_env_line "$GATEWAY_ENV" SSL_CERT_FILE /run/agent-ca/ca.pem
+        write_env_line "$GATEWAY_ENV" NODE_EXTRA_CA_CERTS /run/agent-ca/ca.pem
+        write_env_line "$GATEWAY_ENV" REQUESTS_CA_BUNDLE /run/agent-ca/ca.pem
+        write_env_line "$GATEWAY_ENV" GIT_SSL_CAINFO /run/agent-ca/ca.pem
+        write_env_line "$GATEWAY_ENV" CURL_CA_BUNDLE /run/agent-ca/ca.pem
+    fi
+}
+
+write_worker_env() {
+    WORKER_ENV="$RUN_DIR/worker.env"
+    : > "$WORKER_ENV"
+    chmod 0600 "$WORKER_ENV"
 
     write_env_line "$WORKER_ENV" AGENT_BOX_ROLE worker
     write_env_line "$WORKER_ENV" AGENT_WORKER_PORT "$AGENT_WORKER_PORT"
@@ -284,17 +302,15 @@ write_runtime_env() {
         write_env_line "$WORKER_ENV" LD_LIBRARY_PATH /.singularity.d/libs
     fi
     if [[ -n "$CA_BUNDLE" ]]; then
-        for file in "$GATEWAY_ENV" "$WORKER_ENV"; do
-            write_env_line "$file" SSL_CERT_FILE /run/agent-ca/ca.pem
-            write_env_line "$file" NODE_EXTRA_CA_CERTS /run/agent-ca/ca.pem
-            write_env_line "$file" REQUESTS_CA_BUNDLE /run/agent-ca/ca.pem
-            write_env_line "$file" GIT_SSL_CAINFO /run/agent-ca/ca.pem
-            write_env_line "$file" CURL_CA_BUNDLE /run/agent-ca/ca.pem
-        done
+        write_env_line "$WORKER_ENV" SSL_CERT_FILE /run/agent-ca/ca.pem
+        write_env_line "$WORKER_ENV" NODE_EXTRA_CA_CERTS /run/agent-ca/ca.pem
+        write_env_line "$WORKER_ENV" REQUESTS_CA_BUNDLE /run/agent-ca/ca.pem
+        write_env_line "$WORKER_ENV" GIT_SSL_CAINFO /run/agent-ca/ca.pem
+        write_env_line "$WORKER_ENV" CURL_CA_BUNDLE /run/agent-ca/ca.pem
     fi
 }
 
-build_apptainer_args() {
+build_gateway_args() {
     local common=(exec --compat --cleanenv --no-mount "bind-paths,home,cwd,hostfs" --pwd /app)
 
     GATEWAY_ARGS=(
@@ -304,6 +320,15 @@ build_apptainer_args() {
         --bind "$BOOTSTRAP:/gateway-workspace:ro"
         --bind "$GATEWAY_BRIDGE:/run/agent-bridge:ro"
     )
+
+    if [[ -n "$CA_BUNDLE" ]]; then
+        GATEWAY_ARGS+=(--bind "$CA_BUNDLE:/run/agent-ca/ca.pem:ro")
+    fi
+}
+
+build_worker_args() {
+    local common=(exec --compat --cleanenv --no-mount "bind-paths,home,cwd,hostfs" --pwd /app)
+
     WORKER_ARGS=(
         "${common[@]}"
         --env-file "$WORKER_ENV"
@@ -318,15 +343,24 @@ build_apptainer_args() {
     esac
 
     if [[ -n "$CA_BUNDLE" ]]; then
-        GATEWAY_ARGS+=(--bind "$CA_BUNDLE:/run/agent-ca/ca.pem:ro")
         WORKER_ARGS+=(--bind "$CA_BUNDLE:/run/agent-ca/ca.pem:ro")
     fi
 }
 
+prepare_gateway_command() {
+    prepare
+    write_gateway_env
+    build_gateway_args
+}
+
 prepare_commands() {
     prepare
-    write_runtime_env
-    build_apptainer_args
+    printf 'host-only\n' > "$HOST_SENTINEL"
+    chmod 0600 "$HOST_SENTINEL"
+    write_gateway_env
+    write_worker_env
+    build_gateway_args
+    build_worker_args
 }
 
 gateway_cli() {
@@ -343,13 +377,32 @@ start_worker() {
 
 probe_worker() {
     apptainer "${GATEWAY_ARGS[@]}" "$IMAGE" \
-        /usr/local/bin/agent-entrypoint probe-worker "$AGENT_USER" "$AGENT_WORKER_PORT"
+        /usr/local/bin/agent-entrypoint probe-worker \
+        "$AGENT_USER" "$AGENT_WORKER_PORT" "$HOST_SENTINEL" "$HOST_ENV_FILE" "$HOST_HOME"
+}
+
+probe_worker_internet() {
+    apptainer "${GATEWAY_ARGS[@]}" "$IMAGE" \
+        /usr/local/bin/agent-entrypoint probe-worker-internet "$AGENT_USER" "$AGENT_WORKER_PORT"
+}
+
+probe_worker_repository() {
+    apptainer "${GATEWAY_ARGS[@]}" "$IMAGE" \
+        /usr/local/bin/agent-entrypoint probe-worker-repository \
+        "$AGENT_USER" "$AGENT_WORKER_PORT" "$GITHUB_REPOSITORY"
+}
+
+probe_gateway() {
+    apptainer "${GATEWAY_ARGS[@]}" "$IMAGE" \
+        /usr/local/bin/agent-entrypoint probe-gateway "$WORKSPACE"
 }
 
 wait_for_worker() {
     local attempt
     for ((attempt = 1; attempt <= 30; attempt++)); do
         if probe_worker >/dev/null 2>&1; then
+            rm -f -- "$WORKER_ENV"
+            WORKER_ENV=
             return 0
         fi
         kill -0 "$WORKER_PID" 2>/dev/null || die 'worker stopped during startup; inspect .agent/logs/worker.log'
@@ -361,6 +414,9 @@ wait_for_worker() {
 clean_runtime_env() {
     [[ -n "$GATEWAY_ENV" ]] && rm -f -- "$GATEWAY_ENV"
     [[ -n "$WORKER_ENV" ]] && rm -f -- "$WORKER_ENV"
+    rm -f -- "$HOST_SENTINEL"
+    GATEWAY_ENV=
+    WORKER_ENV=
 }
 
 stop_children() {
@@ -385,7 +441,7 @@ init_agent() {
 }
 
 auth_agent() {
-    prepare_commands
+    prepare_gateway_command
     trap clean_runtime_env EXIT
     gateway_cli config validate
     gateway_cli models auth login --provider openai --device-code
@@ -401,11 +457,39 @@ validate_agent() {
     grep -qi codex <<<"$plugins" || die 'the Codex plugin is not enabled'
     grep -qi slack <<<"$plugins" || die 'the Slack plugin is not enabled'
     gateway_cli models status --check
+    probe_gateway
 
     start_worker
     wait_for_worker
     probe_worker
+    probe_worker_internet
+    if [[ -n "${GITHUB_REPOSITORY:-}" ]]; then
+        probe_worker_repository
+    fi
+    clean_runtime_env
     printf 'Validation passed.\n'
+}
+
+start_gateway() {
+    apptainer "${GATEWAY_ARGS[@]}" "$IMAGE" \
+        /usr/local/bin/agent-entrypoint gateway \
+        > >(tee -a "$LOG_DIR/gateway.log") 2>&1 &
+    GATEWAY_PID=$!
+}
+
+wait_for_gateway() {
+    local attempt
+    for ((attempt = 1; attempt <= 60; attempt++)); do
+        if (exec 3<>"/dev/tcp/127.0.0.1/$AGENT_GATEWAY_PORT") 2>/dev/null; then
+            rm -f -- "$GATEWAY_ENV"
+            GATEWAY_ENV=
+            return 0
+        fi
+        kill -0 "$GATEWAY_PID" 2>/dev/null ||
+            die 'gateway stopped during startup; inspect .agent/logs/gateway.log'
+        sleep 1
+    done
+    die 'gateway did not listen within 60 seconds'
 }
 
 run_agent() {
@@ -419,10 +503,8 @@ run_agent() {
     wait_for_worker
     printf 'Worker ready on local port %s.\n' "$AGENT_WORKER_PORT"
 
-    apptainer "${GATEWAY_ARGS[@]}" "$IMAGE" \
-        /usr/local/bin/agent-entrypoint gateway \
-        > >(tee -a "$LOG_DIR/gateway.log") 2>&1 &
-    GATEWAY_PID=$!
+    start_gateway
+    wait_for_gateway
     printf 'Gateway running. Slack channel: %s\n' "$SLACK_CHANNEL_ID"
 
     set +e

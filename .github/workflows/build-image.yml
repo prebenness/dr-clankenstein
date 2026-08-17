@@ -2,16 +2,13 @@ name: Build agent image
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - container/**
-      - .github/workflows/build-image.yml
 
 permissions:
   contents: read
-  packages: write
 
 env:
+  IMAGE_NAME: ghcr.io/prebenness/dr-clankenstein-runtime-v2
+  PACKAGE_NAME: dr-clankenstein-runtime-v2
   OPENCLAW_COMMIT: 0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c
   OPENCLAW_VERSION: 2026.7.1
 
@@ -19,6 +16,47 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
+      - name: Verify package publisher credential
+        shell: bash
+        env:
+          GHCR_PUBLISH_TOKEN: ${{ secrets.GHCR_PUBLISH_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$GHCR_PUBLISH_TOKEN" || {
+            echo 'Repository secret GHCR_PUBLISH_TOKEN is missing.' >&2
+            exit 1
+          }
+
+      - name: Refuse an existing non-private package
+        shell: bash
+        env:
+          GHCR_PUBLISH_TOKEN: ${{ secrets.GHCR_PUBLISH_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          status="$(curl --silent --show-error \
+            --output /tmp/package.json \
+            --write-out '%{http_code}' \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer $GHCR_PUBLISH_TOKEN" \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/users/${{ github.repository_owner }}/packages/container/$PACKAGE_NAME")"
+
+          case "$status" in
+            404)
+              ;;
+            200)
+              jq -e '.visibility == "private"' /tmp/package.json >/dev/null || {
+                echo "Existing package $PACKAGE_NAME is not private; refusing to publish." >&2
+                exit 1
+              }
+              ;;
+            *)
+              echo "Could not inspect package $PACKAGE_NAME; GitHub returned HTTP $status." >&2
+              cat /tmp/package.json >&2
+              exit 1
+              ;;
+          esac
+
       - name: Check out agent repository
         uses: actions/checkout@v7
 
@@ -40,8 +78,8 @@ jobs:
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GHCR_PUBLISH_TOKEN }}
 
       - name: Build pinned OpenClaw base
         shell: bash
@@ -56,13 +94,12 @@ jobs:
         id: image
         shell: bash
         env:
-          REPOSITORY: ${{ github.repository }}
           REVISION: ${{ github.sha }}
+          GHCR_PUBLISH_TOKEN: ${{ secrets.GHCR_PUBLISH_TOKEN }}
         run: |
           set -Eeuo pipefail
-          image="ghcr.io/${REPOSITORY,,}-box"
           tag="sha-${REVISION}"
-          ref="$image:$tag"
+          ref="$IMAGE_NAME:$tag"
 
           docker build \
             --build-arg OPENCLAW_BASE_IMAGE=openclaw-base:local \
@@ -75,26 +112,38 @@ jobs:
           docker push "$ref" 2>&1 | tee /tmp/image-push.log
           digest="$(sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' /tmp/image-push.log | tail -n 1)"
           test -n "$digest"
+          immutable_ref="$IMAGE_NAME@$digest"
 
-          token_status="$(curl --silent --show-error \
-            --output /tmp/anonymous-token.json \
-            --write-out '%{http_code}' \
-            "https://ghcr.io/token?scope=repository:${image#ghcr.io/}:pull&service=ghcr.io")"
-          if test "$token_status" = 200; then
-            anonymous_token="$(jq -er .token /tmp/anonymous-token.json)"
-            manifest_status="$(curl --silent --show-error \
-              --output /dev/null \
+          visibility=
+          for attempt in {1..15}; do
+            status="$(curl --silent --show-error \
+              --output /tmp/package.json \
               --write-out '%{http_code}' \
-              --header "Authorization: Bearer $anonymous_token" \
-              --header 'Accept: application/vnd.oci.image.manifest.v1+json' \
-              "https://ghcr.io/v2/${image#ghcr.io/}/manifests/$digest")"
-            if test "$manifest_status" = 200; then
-              echo 'The runtime image is anonymously accessible.' >&2
-              exit 1
+              --header 'Accept: application/vnd.github+json' \
+              --header "Authorization: Bearer $GHCR_PUBLISH_TOKEN" \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/users/${{ github.repository_owner }}/packages/container/$PACKAGE_NAME")"
+            if test "$status" = 200; then
+              visibility="$(jq -r .visibility /tmp/package.json)"
+              break
             fi
-          fi
+            sleep 2
+          done
+          test "$visibility" = private || {
+            echo "Published package visibility is '$visibility', not 'private'." >&2
+            exit 1
+          }
 
-          printf 'ref=%s@%s\n' "$image" "$digest" >> "$GITHUB_OUTPUT"
+          anonymous_config="$(mktemp -d)"
+          printf '{"auths":{}}\n' > "$anonymous_config/config.json"
+          if DOCKER_CONFIG="$anonymous_config" docker manifest inspect "$immutable_ref" \
+              >/tmp/anonymous-manifest.out 2>/tmp/anonymous-manifest.err; then
+            echo 'The runtime image is anonymously accessible.' >&2
+            exit 1
+          fi
+          rm -rf -- "$anonymous_config"
+
+          printf 'ref=%s\n' "$immutable_ref" >> "$GITHUB_OUTPUT"
 
       - name: Record immutable image reference
         shell: bash
