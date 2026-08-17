@@ -168,7 +168,17 @@
     entries: {
       openai: { enabled: true },
       slack: { enabled: true },
-      codex: { enabled: true },
+      codex: {
+        enabled: true,
+        config: {
+          appServer: {
+            mode: "guardian",
+            experimental: {
+              sandboxExecServer: true,
+            },
+          },
+        },
+      },
     },
     bundledDiscovery: "compat",
   },
