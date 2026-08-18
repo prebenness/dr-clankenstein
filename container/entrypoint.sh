@@ -142,6 +142,8 @@ probe_worker() {
         ' && test "$HOME" = /tmp/agent-home' \
         ' && test -w /home/node/.openclaw/workspace' \
         ' && test ! -e /gateway-workspace' \
+        ' && test ! -e /home/node/.codex' \
+        ' && test ! -e /home/node/.openclaw/agents' \
         ' && test ! -e /home/node/.openclaw/openclaw.json'
     command+=" && test ! -e $sentinel_q"
     command+=" && test ! -e $env_q"
@@ -172,6 +174,7 @@ probe_worker_repository() {
 
 probe_gateway() {
     local host_workspace="${1:?host workspace path is required}"
+    local config="${OPENCLAW_CONFIG_PATH:-/home/node/.openclaw/openclaw.json}"
 
     [[ "${AGENT_BOX_ROLE:-}" == gateway ]] || die 'gateway role is missing'
     [[ -n "${SLACK_BOT_TOKEN:-}" ]] || die 'Slack bot token is missing from the gateway'
@@ -181,6 +184,16 @@ probe_gateway() {
     [[ -r /gateway-workspace/AGENTS.md ]] || die 'gateway instructions are not readable'
     [[ ! -w /gateway-workspace/AGENTS.md ]] || die 'gateway instructions are writable'
     [[ ! -e "$host_workspace" ]] || die 'worker workspace host path is visible in the gateway'
+    jq -e '.agents.defaults.models["openai/gpt-5.6-sol"].agentRuntime.id == "openclaw"' \
+        "$config" >/dev/null || die 'the OpenClaw embedded runtime is not selected'
+    jq -e '.tools.profile == "full"' "$config" >/dev/null || die 'the full tool profile is not selected'
+    jq -e '.tools.exec.host == "sandbox" and .tools.exec.mode == "full"' \
+        "$config" >/dev/null || die 'worker shell execution is not unrestricted'
+    jq -e '.agents.defaults.sandbox.mode == "all" and .agents.defaults.sandbox.backend == "ssh"' \
+        "$config" >/dev/null || die 'the SSH worker sandbox is not mandatory'
+    jq -e '.tools.elevated.enabled == false' "$config" >/dev/null || die 'elevated execution is enabled'
+    jq -e '(.plugins.allow | index("codex")) == null' \
+        "$config" >/dev/null || die 'the native Codex runtime plugin is still allowed'
     printf 'gateway boundary ok\n'
 }
 

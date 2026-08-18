@@ -22,7 +22,7 @@
       models: {
         "openai/gpt-5.6-sol": {
           agentRuntime: {
-            id: "codex",
+            id: "openclaw",
           },
           params: {
             fastMode: true,
@@ -36,7 +36,6 @@
       },
       thinkingDefault: "xhigh",
       timeoutSeconds: 1800,
-      skills: [],
       sandbox: {
         mode: "all",
         backend: "ssh",
@@ -95,25 +94,18 @@
   },
 
   tools: {
-    allow: [
-      "exec",
-      "process",
-      "read",
-      "write",
-      "edit",
-      "apply_patch",
-      "web_search",
-      "web_fetch",
-      "message",
-      "session_status",
-    ],
-    deny: ["browser", "canvas", "cron", "gateway", "nodes"],
+    profile: "full",
+    deny: ["browser", "canvas", "cron", "gateway", "nodes", "slack"],
+    sandbox: {
+      tools: {
+        allow: [],
+        deny: ["browser", "canvas", "cron", "gateway", "nodes", "slack"],
+      },
+    },
     exec: {
       host: "sandbox",
+      mode: "full",
       timeoutSec: 1800,
-    },
-    fs: {
-      workspaceOnly: true,
     },
     elevated: {
       enabled: false,
@@ -161,24 +153,13 @@
   },
   plugins: {
     enabled: true,
-    allow: ["slack", "openai", "codex", "memory-core"],
+    allow: ["slack", "openai", "memory-core"],
     load: {
       paths: ["/opt/openclaw-plugins/slack"],
     },
     entries: {
       openai: { enabled: true },
       slack: { enabled: true },
-      codex: {
-        enabled: true,
-        config: {
-          appServer: {
-            mode: "guardian",
-            experimental: {
-              sandboxExecServer: true,
-            },
-          },
-        },
-      },
     },
     bundledDiscovery: "compat",
   },

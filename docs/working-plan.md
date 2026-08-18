@@ -1,0 +1,173 @@
+# Research agent box: working plan
+
+Status: agreed working design, implementation in progress, pending end-to-end proof.
+
+## Objective
+
+Build one self-contained research-agent repository that runs the same way on a
+laptop, directly on EX3, or inside a Slurm job.
+
+The agent must be able to:
+
+- communicate with Preben through one Slack app in one private channel;
+- use the internet;
+- run arbitrary commands and subprocesses inside its box;
+- read and write freely inside its box;
+- use visible CPUs and GPUs;
+- write one persistent mounted directory; and
+- push to one GitHub repository with an expendable fine-grained token.
+
+It must not be able to read or write other host files. In particular, the
+model-controlled tools must not be able to read Codex OAuth state.
+
+## Minimum architecture
+
+One immutable image is started as two separate Apptainer instances:
+
+```text
+Slack <-> gateway <-> OpenAI
+            |
+            | tool calls over a local authenticated connection
+            v
+          worker
+```
+
+The split is required because one unrestricted process cannot keep a readable
+OAuth token secret from itself.
+
+### Gateway
+
+The gateway:
+
+- holds the Slack app and bot tokens;
+- holds Codex OAuth state;
+- receives Slack messages and sends replies;
+- makes model requests;
+- reads the user-written Markdown instructions;
+- has no research workspace and no GitHub output token; and
+- provides no model-controlled shell or file access in the gateway.
+
+OpenClaw must own the model tool loop. The native Codex app-server runtime is
+not used for agent turns.
+
+### Worker
+
+The worker is the agent's box. It receives:
+
+- a writable temporary container filesystem;
+- the persistent research workspace as its only writable host mount;
+- unrestricted shell, process and file operations inside the box;
+- internet access and optional GPU passthrough; and
+- the fine-grained GitHub token for the agent's output repository.
+
+It does not receive Slack tokens, Codex OAuth state, the host `.env`, host home,
+or the host's container-registry credentials.
+
+The worker is not restricted by a command allowlist. OpenClaw uses its full
+tool profile. Only capabilities whose purpose is to execute outside the worker
+or control external hosts are unavailable, including elevated gateway
+execution and external-node control.
+
+## Containment
+
+Apptainer runs with containment enabled and with automatic host-home,
+current-directory, host-filesystem and administrator bind mounts disabled.
+Every host mount is explicit.
+
+Apptainer normally shares the host network. The agent can therefore contact
+the public internet, private networks reachable from the host, and listening
+localhost services. This is accepted for the first implementation. The design
+isolates files, credentials, environment and processes; it does not promise a
+network firewall.
+
+## Software and image policy
+
+No OpenClaw, model, plugin or image version is selected by this design.
+
+At implementation time:
+
+1. Inspect the latest stable documentation, release notes, source and tests.
+2. Select the latest stable versions that provide the required supported path.
+3. Verify the behavior from clean state.
+4. Only then record exact software versions, source commits and the immutable
+   image digest for reproducibility.
+
+GitHub Actions builds and publishes a private OCI image. Laptop and EX3 hosts
+pull the immutable image with a host-only registry credential and convert it to
+a SIF. Docker is used only by GitHub Actions, not on the laptop or EX3.
+
+Current implementation selection, verified on 2026-08-18:
+
+- OpenClaw release `v2026.7.1-2`, package version `2026.7.1`, source commit
+  `0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c`;
+- OpenAI model `openai/gpt-5.6-sol`; and
+- Apptainer `1.5.3` in local WSL. The installed EX3 version still needs to be
+  checked when EX3 is reachable.
+
+## Credentials
+
+Each agent has:
+
+- one Slack app;
+- one private Slack channel;
+- one Slack app token and one Slack bot token; and
+- one fine-grained GitHub token limited to its output repository.
+
+Codex OAuth belongs only to the gateway installation. Container-registry read
+credentials belong only to the host and are never mounted into either
+instance.
+
+## Launch workflow
+
+The repository has one launcher. Its run command is identical everywhere:
+
+```text
+laptop:        ./agent run
+EX3 directly:  ./agent run
+Slurm:         agent.sbatch calls ./agent run
+```
+
+The launcher never submits a Slurm job. Preben owns and edits the batch file,
+including partition, node, GPU, CPU, memory and wall-time directives, and
+submits it manually.
+
+## Implementation sequence
+
+1. Audit current stable OpenClaw, Apptainer and OpenAI model behavior using
+   documentation, source, tests and known issues.
+2. Remove the native Codex agent runtime, experimental sandbox execution
+   server and custom OpenClaw compatibility patch.
+3. Configure the explicit OpenClaw embedded runtime with Codex OAuth.
+4. Give the worker the full tool profile while disabling only paths that leave
+   or control the box.
+5. Keep one image, one launcher and the same local, EX3 and Slurm execution
+   path.
+6. Build a private immutable image in GitHub Actions.
+7. Purge generated local test state and perform the Gradient Unmasking Slack
+   app test from a clean installation.
+
+## Acceptance tests
+
+The replacement is not complete until a clean local test proves all of the
+following:
+
+1. Runtime status reports the OpenClaw embedded runtime, not the native Codex
+   app-server runtime.
+2. The agent can run arbitrary foreground and background commands, manipulate
+   files, install user-space packages, use the internet and inspect available
+   hardware inside the worker.
+3. The agent can clone its output repository and push a test commit.
+4. Files created by model-controlled tools appear in the worker workspace and
+   nowhere in the gateway.
+5. The worker cannot see Codex OAuth state, Slack tokens, the host `.env`, host
+   home, registry credentials or an unmounted host canary file.
+6. Stopping the worker makes shell and file tools fail. They must not fall back
+   to gateway execution.
+7. Exactly one instance is connected to the selected Slack app. One Slack
+   message produces one top-level reply with no duplicate or hidden response.
+8. The user-written Markdown files are present in the intended prompt context
+   without silent truncation.
+9. Stopping the launcher leaves no gateway, worker or listener running.
+
+Documentation states intended behavior. Source inspection and these tests are
+required to establish actual behavior.

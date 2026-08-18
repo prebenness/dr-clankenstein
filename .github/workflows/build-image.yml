@@ -9,6 +9,7 @@ permissions:
 env:
   IMAGE_NAME: ghcr.io/prebenness/dr-clankenstein-runtime-v2
   PACKAGE_NAME: dr-clankenstein-runtime-v2
+  OPENCLAW_REF: v2026.7.1-2
   OPENCLAW_COMMIT: 0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c
   OPENCLAW_VERSION: 2026.7.1
 
@@ -60,27 +61,21 @@ jobs:
       - name: Check out agent repository
         uses: actions/checkout@v7
 
-      - name: Check out pinned OpenClaw source
+      - name: Check out exact stable OpenClaw release
         uses: actions/checkout@v7
         with:
           repository: openclaw/openclaw
-          ref: ${{ env.OPENCLAW_COMMIT }}
+          ref: ${{ env.OPENCLAW_REF }}
           path: openclaw-source
 
-      - name: Verify OpenClaw version
+      - name: Verify OpenClaw release
         shell: bash
         run: |
           set -Eeuo pipefail
+          actual_commit="$(git -C openclaw-source rev-parse HEAD)"
           actual="$(jq -r .version openclaw-source/package.json)"
+          test "$actual_commit" = "$OPENCLAW_COMMIT"
           test "$actual" = "$OPENCLAW_VERSION"
-
-      - name: Apply sandbox execution compatibility patch
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          patch="$GITHUB_WORKSPACE/container/openclaw-sandbox-exec-server.patch"
-          git -C openclaw-source apply --check "$patch"
-          git -C openclaw-source apply "$patch"
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4
@@ -94,18 +89,9 @@ jobs:
         run: |
           set -Eeuo pipefail
           docker build \
-            --build-arg OPENCLAW_EXTENSIONS=codex,openai,memory-core \
+            --build-arg OPENCLAW_EXTENSIONS=openai,memory-core \
             --tag openclaw-base:local \
             openclaw-source
-
-      - name: Verify sandbox execution compatibility patch
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          docker run --rm --entrypoint sh openclaw-base:local -c '
-            grep -R -q "case \"environment/info\"" /app/dist/run-attempt-*.js
-            grep -R -q "normalizeProcessCwd" /app/dist/run-attempt-*.js
-          '
 
       - name: Build and push runtime image
         id: image
@@ -170,5 +156,6 @@ jobs:
           {
             printf '## Runtime image\n\n'
             printf '```text\nIMAGE_REF=docker://%s\n```\n' "$IMAGE_REF"
-            printf '\nOpenClaw `%s` at commit `%s`.\n' "$OPENCLAW_VERSION" "$OPENCLAW_COMMIT"
+            printf '\nOpenClaw `%s` (`%s`) at commit `%s`.\n' \
+              "$OPENCLAW_VERSION" "$OPENCLAW_REF" "$OPENCLAW_COMMIT"
           } >> "$GITHUB_STEP_SUMMARY"

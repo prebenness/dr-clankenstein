@@ -13,6 +13,8 @@ The same immutable image runs as two separate Apptainer instances:
 
 OpenClaw and the Slack connection run in the gateway. Model-controlled shell, process and file tools are sent over a loopback SSH connection to the worker. The model does not receive a shell in the gateway.
 
+OpenClaw owns the model loop and uses the selected OpenAI OAuth profile as its model transport. The Codex app-server runtime and its experimental sandbox bridge are not used. The agent receives OpenClaw's full tool profile. Only tools that control something outside the worker are denied: gateway control, external nodes, browser/canvas host control, gateway cron, and direct Slack plugin actions. Normal Slack replies still pass through the gateway. Shell execution inside the worker is unrestricted and does not require approvals.
+
 The launcher reads `.env` on the host and gives each instance only its assigned variables. Temporary environment files are removed after process startup. Apptainer disables automatic host-home, current-directory, host-filesystem and administrator bind mounts. The worker's only persistent writable mount is `.agent/workspace/`. A generated copy of `/etc/resolv.conf` is mounted read-only to provide DNS.
 
 Both instances use the host network stack for outbound access. The design isolates host files, credentials, environment and processes. It does not filter network destinations.
@@ -23,7 +25,7 @@ GitHub Actions builds the OCI image. This is the only place Docker is used. A la
 
 The manual `Build agent image` workflow:
 
-1. Builds the pinned OpenClaw source and matching Slack plugin.
+1. Checks out the selected stable OpenClaw release, verifies its exact commit, and builds it with the matching Slack plugin.
 2. Publishes `ghcr.io/prebenness/dr-clankenstein-runtime-v2` using the `GHCR_PUBLISH_TOKEN` Actions secret.
 3. Refuses an existing package unless GitHub reports it as private.
 4. Verifies the published package is private and rejects anonymous manifest access.
@@ -31,7 +33,9 @@ The manual `Build agent image` workflow:
 
 `GHCR_PUBLISH_TOKEN` must be a classic GitHub personal access token with `write:packages` and no repository scope. The workflow deliberately does not use the public source repository's `GITHUB_TOKEN` to publish the package.
 
-After a successful build, put the reported `docker://...@sha256:...` reference in `image.lock`. Runtime startup never installs or updates packages.
+The release is selected when the image is built, then its tag, source commit, package version and resulting image digest are pinned for reproducibility. Runtime startup never installs or updates packages. After a successful build, put the reported `docker://...@sha256:...` reference in `image.lock`.
+
+The current architecture and acceptance tests are recorded in `docs/working-plan.md`.
 
 ## Credentials
 

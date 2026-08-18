@@ -467,7 +467,7 @@ validate_agent() {
 
     gateway_cli config validate
     plugins="$(gateway_cli plugins list --enabled)"
-    grep -qi codex <<<"$plugins" || die 'the Codex plugin is not enabled'
+    grep -qi openai <<<"$plugins" || die 'the OpenAI plugin is not enabled'
     grep -qi slack <<<"$plugins" || die 'the Slack plugin is not enabled'
     gateway_cli models status --check
     probe_gateway
