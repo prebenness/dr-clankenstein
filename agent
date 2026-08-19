@@ -462,6 +462,8 @@ write_gateway_env() {
 }
 
 write_worker_env() {
+    local name
+
     WORKER_ENV="$RUN_DIR/worker.env"
     : > "$WORKER_ENV"
     chmod 0600 "$WORKER_ENV"
@@ -470,6 +472,19 @@ write_worker_env() {
     write_env_line "$WORKER_ENV" AGENT_WORKER_PORT "$AGENT_WORKER_PORT"
     write_env_line "$WORKER_ENV" GITHUB_PAT "$GITHUB_PAT"
     write_env_line "$WORKER_ENV" GITHUB_REPOSITORY "${GITHUB_REPOSITORY:-}"
+
+    # Preserve the scheduler's assigned GPU set across Apptainer --cleanenv.
+    # These remain worker-only and are propagated through the SSH shell below.
+    for name in \
+        CUDA_VISIBLE_DEVICES \
+        NVIDIA_VISIBLE_DEVICES \
+        CUDA_DEVICE_ORDER \
+        ROCR_VISIBLE_DEVICES \
+        HIP_VISIBLE_DEVICES \
+        GPU_DEVICE_ORDINAL; do
+        [[ -v "$name" ]] || continue
+        write_env_line "$WORKER_ENV" "$name" "${!name}"
+    done
 
     case "$AGENT_GPU" in
         nv)

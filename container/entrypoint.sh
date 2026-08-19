@@ -88,6 +88,12 @@ write_worker_shell_env() {
         AGENT_BOX_ROLE \
         GITHUB_PAT \
         GITHUB_REPOSITORY \
+        CUDA_VISIBLE_DEVICES \
+        NVIDIA_VISIBLE_DEVICES \
+        CUDA_DEVICE_ORDER \
+        ROCR_VISIBLE_DEVICES \
+        HIP_VISIBLE_DEVICES \
+        GPU_DEVICE_ORDINAL \
         LD_LIBRARY_PATH \
         SSL_CERT_FILE \
         NODE_EXTRA_CA_CERTS \
