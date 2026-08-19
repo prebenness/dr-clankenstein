@@ -173,7 +173,7 @@ jobs:
 
           if [[ "$RUNTIME" == rocm ]]; then
             docker run --rm --entrypoint /bin/bash "$ref" -lc \
-              'test -x /opt/rocm/bin/rocminfo; test -e /opt/rocm/lib/libhsa-runtime64.so.1; ! ldd /opt/rocm/bin/rocminfo | grep -q "not found"; python3 -c '\''import torch; assert torch.__version__.startswith("2.6.0"); assert torch.version.hip and torch.version.hip.startswith("6.2")'\'''
+              'set -Eeuo pipefail; test -x /opt/rocm/bin/rocminfo; test -e /opt/rocm/lib/libhsa-runtime64.so.1; ! ldd /opt/rocm/bin/rocminfo | grep -q "not found"; python3 -c '\''import torch; assert torch.__version__.startswith("2.6.0"); assert torch.version.hip and torch.version.hip.startswith("6.2")'\'''
           fi
 
           docker push "$ref" 2>&1 | tee /tmp/image-push.log
