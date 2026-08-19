@@ -48,6 +48,11 @@ keygen() {
 }
 
 worker_shell() {
+    local worker_env=/tmp/agent-worker/environment
+
+    [[ -r "$worker_env" ]] || die 'worker environment is missing'
+    # shellcheck disable=SC1090
+    source "$worker_env"
     [[ "${AGENT_BOX_ROLE:-}" == worker ]] || die 'worker shell started outside the worker'
 
     unset SLACK_BOT_TOKEN SLACK_APP_TOKEN OPENCLAW_GATEWAY_TOKEN CODEX_HOME
@@ -69,6 +74,30 @@ worker_shell() {
     exec /bin/bash --noprofile --norc -c "$SSH_ORIGINAL_COMMAND"
 }
 
+write_worker_shell_env() {
+    local name
+    local worker_dir=/tmp/agent-worker
+    local worker_env="$worker_dir/environment"
+
+    umask 077
+    mkdir -p "$worker_dir"
+    : > "$worker_env"
+    for name in \
+        AGENT_BOX_ROLE \
+        GITHUB_PAT \
+        GITHUB_REPOSITORY \
+        LD_LIBRARY_PATH \
+        SSL_CERT_FILE \
+        NODE_EXTRA_CA_CERTS \
+        REQUESTS_CA_BUNDLE \
+        GIT_SSL_CAINFO \
+        CURL_CA_BUNDLE; do
+        [[ -v "$name" ]] || continue
+        printf 'export %s=%q\n' "$name" "${!name}" >> "$worker_env"
+    done
+    chmod 0600 "$worker_env"
+}
+
 worker() {
     local port="${AGENT_WORKER_PORT:?AGENT_WORKER_PORT is required}"
     local login_home
@@ -76,6 +105,7 @@ worker() {
     [[ -n "${GITHUB_PAT:-}" ]] || die 'GITHUB_PAT is missing from the worker environment'
     [[ -r /run/agent-bridge/ssh_host_key ]] || die 'worker SSH host key is not mounted'
     login_home="$(getent passwd "$(id -u)" | cut -d: -f6)"
+    write_worker_shell_env
 
     exec /usr/sbin/sshd -D -e -f /dev/null \
         -h /run/agent-bridge/ssh_host_key \
