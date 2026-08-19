@@ -14,6 +14,13 @@
       "enabled": false
     }
   },
+  "models": {
+    "providers": {
+      "openai": {
+        "timeoutSeconds": 300
+      }
+    }
+  },
   "agents": {
     "defaults": {
       "workspace": "/gateway-workspace",
