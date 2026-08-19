@@ -524,7 +524,7 @@ wait_for_gateway() {
     local attempt status
     for ((attempt = 1; attempt <= 90; attempt++)); do
         status=
-        if exec 3<>"/dev/tcp/127.0.0.1/$AGENT_GATEWAY_PORT" 2>/dev/null; then
+        if { exec 3<>"/dev/tcp/127.0.0.1/$AGENT_GATEWAY_PORT"; } 2>/dev/null; then
             printf 'GET /readyz HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n' >&3
             IFS= read -r status <&3 || true
             exec 3>&-
