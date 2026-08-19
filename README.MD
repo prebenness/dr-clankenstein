@@ -100,6 +100,15 @@ cp agent.sbatch.example agent.sbatch
 
 Set the partition, node constraint, GPU count, CPUs, memory, wall time and `AGENT_GPU`. Submit it yourself with `sbatch agent.sbatch`.
 
+Before submitting, inspect which GPU partitions currently fit those resources:
+
+```bash
+# EX3 login node; repository root.
+./free-gpus.sh
+```
+
+The command reads `agent.sbatch` by default. Use `--verbose` for pending-job details and Slurm's `sbatch --test-only` response.
+
 The batch file runs the same `./agent run` command used directly. Set `AGENT_GPU=nv` for NVIDIA, `AGENT_GPU=rocm` for AMD and `AGENT_GPU=none` for CPU-only use. The current image supports x86-64 hosts and deliberately excludes large machine-learning stacks.
 
 Under WSL, NVIDIA passthrough additionally requires `nvidia-container-toolkit` on the host. The launcher then uses Apptainer's WSL-specific `--nvccli` path and mounts the host CUDA runtime library directory read-only. Native Linux hosts, including EX3, continue to use ordinary `--nv` passthrough.
