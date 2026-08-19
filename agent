@@ -177,6 +177,7 @@ render_config() {
     channel_lower="${SLACK_CHANNEL_ID,,}"
 
     sed \
+        -e "s/__OPENCLAW_VERSION__/$OPENCLAW_VERSION/g" \
         -e "s/__OPENCLAW_GATEWAY_PORT__/$AGENT_GATEWAY_PORT/g" \
         -e "s/__AGENT_USER__/$AGENT_USER/g" \
         -e "s/__AGENT_WORKER_PORT__/$AGENT_WORKER_PORT/g" \

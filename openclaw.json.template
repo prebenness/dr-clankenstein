@@ -1,166 +1,168 @@
 {
-  gateway: {
-    mode: "local",
-    port: __OPENCLAW_GATEWAY_PORT__,
-    bind: "loopback",
-    auth: {
-      mode: "token",
-      token: "${OPENCLAW_GATEWAY_TOKEN}",
-    },
-    controlUi: {
-      enabled: false,
-    },
+  "meta": {
+    "lastTouchedVersion": "__OPENCLAW_VERSION__"
   },
-
-  agents: {
-    defaults: {
-      workspace: "/gateway-workspace",
-      skipBootstrap: true,
-      model: {
-        primary: "openai/gpt-5.6-sol",
+  "gateway": {
+    "mode": "local",
+    "port": __OPENCLAW_GATEWAY_PORT__,
+    "bind": "loopback",
+    "auth": {
+      "mode": "token",
+      "token": "${OPENCLAW_GATEWAY_TOKEN}"
+    },
+    "controlUi": {
+      "enabled": false
+    }
+  },
+  "agents": {
+    "defaults": {
+      "workspace": "/gateway-workspace",
+      "skipBootstrap": true,
+      "model": {
+        "primary": "openai/gpt-5.6-sol"
       },
-      models: {
+      "models": {
         "openai/gpt-5.6-sol": {
-          agentRuntime: {
-            id: "openclaw",
+          "agentRuntime": {
+            "id": "openclaw"
           },
-          params: {
-            fastMode: true,
-          },
-        },
+          "params": {
+            "fastMode": true
+          }
+        }
       },
-      promptOverlays: {
-        gpt5: {
-          personality: "off",
-        },
+      "promptOverlays": {
+        "gpt5": {
+          "personality": "off"
+        }
       },
-      thinkingDefault: "xhigh",
-      timeoutSeconds: 1800,
-      sandbox: {
-        mode: "all",
-        backend: "ssh",
-        scope: "agent",
-        workspaceAccess: "rw",
-        ssh: {
-          target: "__AGENT_USER__@127.0.0.1:__AGENT_WORKER_PORT__",
-          workspaceRoot: "/home/node/.openclaw/workspace",
-          strictHostKeyChecking: true,
-          updateHostKeys: false,
-          identityFile: "/run/agent-bridge/client_key",
-          knownHostsFile: "/run/agent-bridge/known_hosts",
-        },
+      "thinkingDefault": "xhigh",
+      "timeoutSeconds": 1800,
+      "sandbox": {
+        "mode": "all",
+        "backend": "ssh",
+        "scope": "agent",
+        "workspaceAccess": "rw",
+        "ssh": {
+          "target": "__AGENT_USER__@127.0.0.1:__AGENT_WORKER_PORT__",
+          "workspaceRoot": "/home/node/.openclaw/workspace",
+          "strictHostKeyChecking": true,
+          "updateHostKeys": false,
+          "identityFile": "/run/agent-bridge/client_key",
+          "knownHostsFile": "/run/agent-bridge/known_hosts"
+        }
       },
-      heartbeat: {
-        every: "10m",
-        session: "agent:main:slack:channel:__SLACK_CHANNEL_ID_LOWER__",
-        target: "last",
-        to: "__SLACK_CHANNEL_ID__",
-        timeoutSeconds: 120,
-        isolatedSession: false,
-        lightContext: false,
-        directPolicy: "allow",
-        ackMaxChars: 0,
-      },
+      "heartbeat": {
+        "every": "10m",
+        "session": "agent:main:slack:channel:__SLACK_CHANNEL_ID_LOWER__",
+        "target": "last",
+        "to": "__SLACK_CHANNEL_ID__",
+        "timeoutSeconds": 120,
+        "isolatedSession": false,
+        "lightContext": false,
+        "directPolicy": "allow",
+        "ackMaxChars": 0
+      }
     },
-    list: [
+    "list": [
       {
-        id: "main",
-        default: true,
-        thinkingDefault: "xhigh",
-        fastModeDefault: true,
-      },
-    ],
+        "id": "main",
+        "default": true,
+        "thinkingDefault": "xhigh",
+        "fastModeDefault": true
+      }
+    ]
   },
-
-  channels: {
-    slack: {
-      enabled: true,
-      dmPolicy: "allowlist",
-      allowFrom: ["__SLACK_ALLOWED_USER_ID__"],
-      groupPolicy: "allowlist",
-      channels: {
+  "channels": {
+    "slack": {
+      "enabled": true,
+      "dmPolicy": "allowlist",
+      "allowFrom": ["__SLACK_ALLOWED_USER_ID__"],
+      "groupPolicy": "allowlist",
+      "channels": {
         "__SLACK_CHANNEL_ID__": {
-          enabled: true,
-          requireMention: false,
-          users: ["__SLACK_ALLOWED_USER_ID__"],
-        },
+          "enabled": true,
+          "requireMention": false,
+          "users": ["__SLACK_ALLOWED_USER_ID__"]
+        }
       },
-      replyToMode: "off",
-      historyLimit: 50,
-      streaming: {
-        mode: "off",
+      "replyToMode": "off",
+      "historyLimit": 50,
+      "streaming": {
+        "mode": "off"
+      }
+    }
+  },
+  "tools": {
+    "profile": "full",
+    "deny": ["browser", "canvas", "cron", "gateway", "nodes", "slack"],
+    "sandbox": {
+      "tools": {
+        "allow": [],
+        "deny": ["browser", "canvas", "cron", "gateway", "nodes", "slack"]
+      }
+    },
+    "exec": {
+      "host": "sandbox",
+      "mode": "full",
+      "timeoutSec": 1800
+    },
+    "elevated": {
+      "enabled": false
+    },
+    "web": {
+      "search": {
+        "enabled": true,
+        "openaiCodex": {
+          "enabled": true,
+          "mode": "cached"
+        }
       },
-    },
+      "fetch": {
+        "enabled": true
+      }
+    }
   },
-
-  tools: {
-    profile: "full",
-    deny: ["browser", "canvas", "cron", "gateway", "nodes", "slack"],
-    sandbox: {
-      tools: {
-        allow: [],
-        deny: ["browser", "canvas", "cron", "gateway", "nodes", "slack"],
+  "session": {
+    "scope": "per-sender",
+    "dmScope": "per-channel-peer",
+    "reset": {
+      "mode": "idle",
+      "idleMinutes": 1440
+    }
+  },
+  "logging": {
+    "level": "info",
+    "redactSensitive": "tools",
+    "file": "/home/node/.openclaw/logs/openclaw.log"
+  },
+  "update": {
+    "auto": {
+      "enabled": false
+    },
+    "checkOnStart": false
+  },
+  "discovery": {
+    "mdns": {
+      "mode": "off"
+    }
+  },
+  "commands": {
+    "bash": false,
+    "config": false,
+    "restart": false
+  },
+  "plugins": {
+    "enabled": true,
+    "allow": ["slack", "openai", "memory-core"],
+    "entries": {
+      "openai": {
+        "enabled": true
       },
+      "slack": {
+        "enabled": true
+      }
     },
-    exec: {
-      host: "sandbox",
-      mode: "full",
-      timeoutSec: 1800,
-    },
-    elevated: {
-      enabled: false,
-    },
-    web: {
-      search: {
-        enabled: true,
-        openaiCodex: {
-          enabled: true,
-          mode: "cached",
-        },
-      },
-      fetch: {
-        enabled: true,
-      },
-    },
-  },
-
-  session: {
-    scope: "per-sender",
-    dmScope: "per-channel-peer",
-    reset: {
-      mode: "idle",
-      idleMinutes: 1440,
-    },
-  },
-
-  logging: {
-    level: "info",
-    redactSensitive: "tools",
-    file: "/home/node/.openclaw/logs/openclaw.log",
-  },
-
-  update: {
-    auto: { enabled: false },
-    checkOnStart: false,
-  },
-  discovery: {
-    mdns: { mode: "off" },
-  },
-  commands: {
-    bash: false,
-    config: false,
-    restart: false,
-  },
-  plugins: {
-    enabled: true,
-    allow: ["slack", "openai", "memory-core"],
-    load: {
-      paths: ["/opt/openclaw-plugins/slack"],
-    },
-    entries: {
-      openai: { enabled: true },
-      slack: { enabled: true },
-    },
-    bundledDiscovery: "compat",
-  },
+    "bundledDiscovery": "compat"
+  }
 }

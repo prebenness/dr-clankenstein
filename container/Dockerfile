@@ -1,8 +1,6 @@
 ARG OPENCLAW_BASE_IMAGE=openclaw-base:local
 FROM ${OPENCLAW_BASE_IMAGE}
 
-ARG OPENCLAW_VERSION
-
 USER root
 
 RUN apt-get update \
@@ -27,20 +25,7 @@ COPY container/git-askpass.sh /usr/local/bin/agent-git-askpass
 
 RUN chmod 0755 /usr/local/bin/agent-entrypoint /usr/local/bin/agent-git-askpass
 
-RUN install -d -m 0755 -o node -g node /opt/openclaw-plugins
-
 USER node
-
-RUN set -eux; \
-    test -n "$OPENCLAW_VERSION"; \
-    OPENCLAW_STATE_DIR=/opt/openclaw-plugins/state \
-    OPENCLAW_CONFIG_PATH=/opt/openclaw-plugins/state/openclaw.json \
-        node /app/openclaw.mjs plugins install --pin "npm:@openclaw/slack@$OPENCLAW_VERSION"; \
-    slack_dir="$(find /opt/openclaw-plugins/state -type d -path '*/node_modules/@openclaw/slack' -print -quit)"; \
-    test -n "$slack_dir"; \
-    ln -s "$slack_dir" /opt/openclaw-plugins/slack; \
-    test -f /opt/openclaw-plugins/slack/openclaw.plugin.json; \
-    test "$(node -p "require('/opt/openclaw-plugins/slack/package.json').version")" = "$OPENCLAW_VERSION"
 
 ARG IMAGE_REVISION=unknown
 LABEL org.opencontainers.image.revision="${IMAGE_REVISION}" \

@@ -89,7 +89,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           docker build \
-            --build-arg OPENCLAW_EXTENSIONS=openai,memory-core \
+            --build-arg OPENCLAW_EXTENSIONS=openai,memory-core,slack,codex \
             --tag openclaw-base:local \
             openclaw-source
 
@@ -106,7 +106,6 @@ jobs:
 
           docker build \
             --build-arg OPENCLAW_BASE_IMAGE=openclaw-base:local \
-            --build-arg OPENCLAW_VERSION="$OPENCLAW_VERSION" \
             --build-arg IMAGE_REVISION="$REVISION" \
             --file container/Dockerfile \
             --tag "$ref" \

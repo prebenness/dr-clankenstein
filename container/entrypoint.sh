@@ -199,8 +199,10 @@ probe_gateway() {
 
 case "${1:-check}" in
     check)
-        [[ -f /opt/openclaw-plugins/slack/openclaw.plugin.json ]] ||
+        [[ -f /app/extensions/slack/openclaw.plugin.json ]] ||
             die 'the Slack plugin is missing from the image'
+        [[ -f /app/extensions/codex/openclaw.plugin.json ]] ||
+            die 'the Codex OAuth companion package is missing from the image'
         node /app/openclaw.mjs --version
         git --version
         dropbear -V
