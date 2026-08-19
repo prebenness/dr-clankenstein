@@ -114,14 +114,19 @@ Local proof completed on 2026-08-19:
 - model-controlled `read`, `write` and `edit` calls ran in the worker and wrote
   the persistent workspace;
 - the worker reached the internet and the configured GitHub repository;
+- the model fetched the `python/cpython` GitHub API record from the worker;
+- the model created a workspace-local Python environment, installed CuPy, and
+  completed a verified 256 by 256 matrix multiplication on the laptop GPU;
+- the model committed and pushed the two smoke-test files to the configured
+  repository, and the remote commit was independently verified;
 - the gateway/worker credential and mount probes passed;
 - the Markdown prompt report showed no truncation;
 - the Slack Socket Mode connection reached ready state; and
 - stopping the launcher removed both containers and both listeners.
 
-Still pending: a push test, background-process and user-package tests, a
-deliberate model-led credential search, worker-stop fail-closed proof, one
-inbound Slack request on the final image, and GPU/EX3/Slurm tests.
+Still pending: a background-process test, a deliberate model-led credential
+search, worker-stop fail-closed proof, one inbound Slack request on the final
+setup, and EX3/Slurm tests including cluster GPU passthrough.
 
 ## Credentials
 
