@@ -1,6 +1,6 @@
 # Research agent box: working plan
 
-Status: local implementation and EX3 login-node validation are functional as of 2026-08-19. All three private image variants build successfully and are pinned by digest. Slurm GPU validation is pending.
+Status: local implementation and EX3 login-node validation are functional as of 2026-08-19. All three private image variants build successfully and are pinned by digest. The ROCm variant passed an EX3 MI210 Slurm test; current NVIDIA Slurm validation is pending.
 
 ## Objective
 
@@ -143,8 +143,11 @@ Local proof completed on 2026-08-19:
 - the Slack Socket Mode connection reached ready state; and
 - stopping the launcher removed both containers and both listeners.
 
-Still pending: Slurm tests of the three image variants, including cluster GPU
-passthrough.
+The `rocm-amd64` variant passed on EX3 node `n015` on 2026-08-19: the worker
+identified an AMD Instinct MI210, completed a PyTorch GPU tensor computation,
+and reached gateway and Slack readiness. The job was cancelled after the proof
+at 3 minutes 41 seconds. Still pending: current Slurm tests of `cuda-amd64` and
+`cuda-arm64`; no compatible NVIDIA GPU was free during this test window.
 
 ## Credentials
 
