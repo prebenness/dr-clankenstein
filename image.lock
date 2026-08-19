@@ -1,4 +1,4 @@
-IMAGE_REF=docker://ghcr.io/prebenness/dr-clankenstein-runtime-v2@sha256:8404b9aa3d131db78ab22180c56e7a691f353d0489e953bdbe2a3954280fb50b
+IMAGE_REF=docker://ghcr.io/prebenness/dr-clankenstein-runtime-v2@sha256:604a6a61cdfbf814a6235f2326b19f75b2a1c39eee756861233fd7db09f0816f
 IMAGE_ARCH=amd64
 OPENCLAW_RELEASE=v2026.7.1-2
 OPENCLAW_VERSION=2026.7.1
