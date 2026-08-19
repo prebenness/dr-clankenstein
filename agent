@@ -135,6 +135,10 @@ port_is_open() {
     (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null
 }
 
+is_wsl() {
+    grep -qi microsoft /proc/sys/kernel/osrelease
+}
+
 require_free_ports() {
     port_is_open "$AGENT_WORKER_PORT" &&
         die "worker port $AGENT_WORKER_PORT is already in use; stop the other agent instance"
@@ -384,7 +388,15 @@ build_worker_args() {
     )
 
     case "$AGENT_GPU" in
-        nv) WORKER_ARGS+=(--nv) ;;
+        nv)
+            WORKER_ARGS+=(--nv)
+            if is_wsl; then
+                command -v nvidia-container-cli >/dev/null 2>&1 ||
+                    die 'nvidia-container-toolkit is required for NVIDIA GPU access under WSL'
+                export NVIDIA_VISIBLE_DEVICES="${NVIDIA_VISIBLE_DEVICES:-all}"
+                WORKER_ARGS+=(--nvccli)
+            fi
+            ;;
         rocm) WORKER_ARGS+=(--rocm) ;;
     esac
 
