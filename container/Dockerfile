@@ -5,6 +5,7 @@ ARG IMAGE_VARIANT=unknown
 ARG TARGETARCH=unknown
 ARG ROCM_VERSION=6.2.4
 ARG PYTORCH_ROCM_VERSION=2.6.0
+ARG PYTHON_PIP_VERSION=26.2
 
 USER root
 
@@ -31,6 +32,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 RUN if [ "$IMAGE_VARIANT" = rocm-amd64 ]; then \
+        python3 -m pip install \
+            --break-system-packages \
+            --no-cache-dir \
+            --index-url https://pypi.org/simple \
+            "pip==${PYTHON_PIP_VERSION}"; \
         python3 -m pip install \
             --break-system-packages \
             --no-cache-dir \

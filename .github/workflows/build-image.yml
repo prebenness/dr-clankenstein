@@ -15,6 +15,7 @@ env:
   ROCM_VERSION: 6.2.4
   ROCM_BASE_IMAGE: docker.io/rocm/dev-ubuntu-22.04:6.2.4@sha256:030304ab0a88778b627b2eb2354c419146e105f5ac39ffd9c2438c82ef54b584
   PYTORCH_ROCM_VERSION: 2.6.0
+  PYTHON_PIP_VERSION: 26.2
 
 jobs:
   preflight:
@@ -163,6 +164,7 @@ jobs:
             --build-arg TARGETARCH="$TARGET_ARCH" \
             --build-arg ROCM_VERSION="$ROCM_VERSION" \
             --build-arg PYTORCH_ROCM_VERSION="$PYTORCH_ROCM_VERSION" \
+            --build-arg PYTHON_PIP_VERSION="$PYTHON_PIP_VERSION" \
             --file container/Dockerfile \
             --tag "$ref" \
             .
@@ -275,6 +277,7 @@ jobs:
             printf 'ROCM_VERSION=%s\n' "$ROCM_VERSION"
             printf 'ROCM_BASE_IMAGE=%s\n' "$ROCM_BASE_IMAGE"
             printf 'PYTORCH_ROCM_VERSION=%s\n' "$PYTORCH_ROCM_VERSION"
+            printf 'PYTHON_PIP_VERSION=%s\n' "$PYTHON_PIP_VERSION"
             printf '```\n'
             printf '\nOpenClaw `%s` (`%s`) at commit `%s`.\n' \
               "$OPENCLAW_VERSION" "$OPENCLAW_REF" "$OPENCLAW_COMMIT"
