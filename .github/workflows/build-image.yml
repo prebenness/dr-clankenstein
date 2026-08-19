@@ -89,7 +89,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           docker build \
-            --build-arg OPENCLAW_EXTENSIONS=openai,memory-core,slack,codex \
+            --build-arg OPENCLAW_EXTENSIONS=openai,memory-core,slack \
             --tag openclaw-base:local \
             openclaw-source
 

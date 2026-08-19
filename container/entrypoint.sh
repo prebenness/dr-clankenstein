@@ -255,8 +255,8 @@ case "${1:-check}" in
     check)
         [[ -f /opt/agent-plugins/slack/openclaw.plugin.json ]] ||
             die 'the Slack plugin is missing from the image'
-        [[ -f /app/extensions/codex/openclaw.plugin.json ]] ||
-            die 'the Codex OAuth companion package is missing from the image'
+        [[ -f /app/extensions/openai/openclaw.plugin.json ]] ||
+            die 'the OpenAI provider plugin is missing from the image'
         node /app/openclaw.mjs --version
         git --version
         dpkg-query -W -f='OpenSSH server ${Version}\n' openssh-server

@@ -13,7 +13,7 @@ The same immutable image runs as two separate Apptainer instances:
 
 OpenClaw and the Slack connection run in the gateway. Model-controlled shell, process and file tools are sent over a loopback SSH connection to the worker. The model does not receive a shell in the gateway.
 
-OpenClaw owns the model loop and uses the selected OpenAI OAuth profile as its model transport. The Codex app-server runtime and its experimental sandbox bridge are not used. The Codex package is present but excluded from `plugins.allow`; this satisfies OpenClaw's OAuth setup check without enabling that runtime or downloading it during setup. The agent receives OpenClaw's full tool profile. Only tools that control something outside the worker are denied: gateway control, external nodes, browser/canvas host control, and gateway cron. Slack communication remains available through the gateway. Shell execution inside the worker is unrestricted and does not require approvals.
+OpenClaw owns the model loop and uses the selected OpenAI OAuth profile as its model transport. The native Codex app-server runtime and its experimental sandbox bridge are not enabled or used, and the Codex runtime package dependencies are omitted from the image. The agent receives OpenClaw's full tool profile. Unrelated bundled skills are disabled; skills are prompt instructions, not tools. Only tools that control something outside the worker are denied: gateway control, external nodes, browser/canvas host control, and gateway cron. Slack communication remains available through the gateway. Shell execution inside the worker is unrestricted and does not require approvals.
 
 The launcher reads `.env` on the host and gives each instance only its assigned variables. Temporary environment files are removed after process startup. Apptainer disables automatic host-home, current-directory, host-filesystem and administrator bind mounts. The worker's only persistent writable mount is `.agent/workspace/`. A generated copy of `/etc/resolv.conf` is mounted read-only to provide DNS.
 
@@ -25,13 +25,13 @@ GitHub Actions builds the OCI image. This is the only place Docker is used. A la
 
 The manual `Build agent image` workflow:
 
-1. Checks out the selected stable OpenClaw release, verifies its exact commit, and retains the required official plugin code in the image.
+1. Checks out the selected stable OpenClaw release, verifies its exact commit, and installs the OpenAI, memory and Slack plugin dependencies in the image.
 2. Publishes `ghcr.io/prebenness/dr-clankenstein-runtime-v2` using the `GHCR_PUBLISH_TOKEN` Actions secret.
 3. Refuses an existing package unless GitHub reports it as private.
 4. Verifies the published package is private and rejects anonymous manifest access.
 5. Prints the immutable image digest in the workflow summary.
 
-`GHCR_PUBLISH_TOKEN` must be a classic GitHub personal access token with `write:packages` and no repository scope. The workflow deliberately does not use the public source repository's `GITHUB_TOKEN` to publish the package.
+`GHCR_PUBLISH_TOKEN` must be a classic GitHub personal access token with `read:packages` and `write:packages`, and no repository scope. The same token can authenticate host-side pulls. The workflow deliberately does not use the public source repository's `GITHUB_TOKEN`, because a package published from it can inherit the public repository's visibility.
 
 The release is selected when the image is built, then its tag, source commit, package version and resulting image digest are pinned for reproducibility. Runtime startup never installs or updates packages. After a successful build, put the reported `docker://...@sha256:...` reference in `image.lock`.
 
@@ -41,22 +41,21 @@ The current architecture and acceptance tests are recorded in `docs/working-plan
 
 | Credential | Quantity | Location | Visible to |
 | --- | --- | --- | --- |
-| GHCR publisher PAT | One shared token | GitHub Actions secret | Image workflow only |
-| GHCR reader PAT | One shared token | Each host's Apptainer auth file | Host-side `pull` only |
+| GHCR registry PAT | One shared token | GitHub Actions secret and each host's Apptainer auth file | Image workflow and host-side `pull` only |
 | Slack bot and app tokens | One pair per agent | `.env` | Gateway |
 | Fine-grained output-repository PAT | One per agent | `.env` | Worker |
 | Codex OAuth state | One login per installation | `.agent/gateway-state/` | Gateway |
 
-The GHCR reader token must be a classic PAT with `read:packages`. Authenticate once on each machine:
+Use that registry token to authenticate once on each machine:
 
 ```bash
 # Laptop WSL or EX3 login node; any directory.
 mkdir -p "$HOME/.apptainer"
-printf '%s' "$GHCR_READ_TOKEN" | apptainer registry login \
+printf '%s' "$GHCR_TOKEN" | apptainer registry login \
   --authfile "$HOME/.apptainer/agent-registry-auth.json" \
   --username YOUR_GITHUB_USER \
   --password-stdin docker://ghcr.io
-unset GHCR_READ_TOKEN
+unset GHCR_TOKEN
 ```
 
 The launcher uses that explicit auth file when it pulls the private image. This avoids Docker Desktop credential helpers under WSL. The file is never mounted into either agent instance.

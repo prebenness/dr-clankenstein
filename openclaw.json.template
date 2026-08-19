@@ -25,6 +25,7 @@
     "defaults": {
       "workspace": "/gateway-workspace",
       "skipBootstrap": true,
+      "skills": [],
       "model": {
         "primary": "openai/gpt-5.6-sol"
       },

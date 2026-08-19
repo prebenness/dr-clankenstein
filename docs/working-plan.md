@@ -1,6 +1,6 @@
 # Research agent box: working plan
 
-Status: agreed working design, implementation in progress, pending end-to-end proof.
+Status: local implementation functional as of 2026-08-19. EX3, Slurm and the remaining acceptance checks are pending.
 
 ## Objective
 
@@ -103,6 +103,21 @@ Current implementation selection, verified on 2026-08-18:
 - OpenAI model `openai/gpt-5.6-sol`; and
 - Apptainer `1.5.3` in local WSL. The installed EX3 version still needs to be
   checked when EX3 is reachable.
+
+Local proof completed on 2026-08-19:
+
+- the OpenClaw runtime handled a real model turn;
+- model-controlled `read`, `write` and `edit` calls ran in the worker and wrote
+  the persistent workspace;
+- the worker reached the internet and the configured GitHub repository;
+- the gateway/worker credential and mount probes passed;
+- the Markdown prompt report showed no truncation;
+- the Slack Socket Mode connection reached ready state; and
+- stopping the launcher removed both containers and both listeners.
+
+Still pending: a push test, background-process and user-package tests, a
+deliberate model-led credential search, worker-stop fail-closed proof, one
+inbound Slack request on the final image, and GPU/EX3/Slurm tests.
 
 ## Credentials
 
