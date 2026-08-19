@@ -1,6 +1,6 @@
-IMAGE_CUDA_AMD64_REF=docker://ghcr.io/prebenness/dr-clankenstein-runtime-v2@sha256:1102014e8c8c65338cdfed1dc43e66017fb9305b00f92e57c6272e637a905fee
-IMAGE_CUDA_ARM64_REF=
-IMAGE_ROCM_AMD64_REF=
+IMAGE_CUDA_AMD64_REF=docker://ghcr.io/prebenness/dr-clankenstein-runtime-v2@sha256:52ef720379372955633e3faf4ecf143d3026c00e637a976b54bd06038a0c7a28
+IMAGE_CUDA_ARM64_REF=docker://ghcr.io/prebenness/dr-clankenstein-runtime-v2@sha256:3d383198f97bbecb9b13b022f670127e4e7ff051bbb05a7df99951a3a303c920
+IMAGE_ROCM_AMD64_REF=docker://ghcr.io/prebenness/dr-clankenstein-runtime-v2@sha256:6db404656e280dd70f81acf8835018c3d0bd49c30085e5ee303c0790a06a6f8a
 ROCM_VERSION=6.2.4
 ROCM_BASE_IMAGE=docker.io/rocm/dev-ubuntu-22.04:6.2.4@sha256:030304ab0a88778b627b2eb2354c419146e105f5ac39ffd9c2438c82ef54b584
 PYTORCH_ROCM_VERSION=2.6.0

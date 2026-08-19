@@ -1,6 +1,6 @@
 # Research agent box: working plan
 
-Status: local implementation and EX3 login-node validation are functional as of 2026-08-19. Slurm GPU validation of the new image variants is pending.
+Status: local implementation and EX3 login-node validation are functional as of 2026-08-19. All three private image variants build successfully and are pinned by digest. Slurm GPU validation is pending.
 
 ## Objective
 
@@ -118,10 +118,10 @@ Current common runtime selection, verified on 2026-08-19:
 - OpenAI model `openai/gpt-5.6-sol`; and
 - Apptainer `1.5.3` in local WSL and `1.5.0` on EX3.
 
-The variant build selection being implemented is NVIDIA for `linux/amd64` and
-`linux/arm64`, plus ROCm `6.2.4` and PyTorch `2.6.0` for `linux/amd64`. The
-ROCm version matches the EX3 module selected for the first AMD test; the
-resulting image and GPU execution still require build and Slurm verification.
+The built variants are NVIDIA for `linux/amd64` and `linux/arm64`, plus ROCm
+`6.2.4` and PyTorch `2.6.0` for `linux/amd64`. The ROCm version matches the EX3
+module selected for the first AMD test. GitHub Actions verified all three image
+builds on 2026-08-19; cluster GPU execution still requires Slurm verification.
 
 Local proof completed on 2026-08-19:
 
@@ -143,8 +143,7 @@ Local proof completed on 2026-08-19:
 - the Slack Socket Mode connection reached ready state; and
 - stopping the launcher removed both containers and both listeners.
 
-Still pending: a background-process test, a deliberate model-led credential
-search, and Slurm tests of the three image variants including cluster GPU
+Still pending: Slurm tests of the three image variants, including cluster GPU
 passthrough.
 
 ## Credentials
@@ -165,10 +164,13 @@ instance.
 The repository has one launcher. Its run command is identical everywhere:
 
 ```text
-laptop:        ./agent run
-EX3 directly:  ./agent run
-Slurm:         agent.sbatch calls ./agent run
+laptop:                     ./agent run
+EX3 interactive allocation: ./agent run
+Slurm:                      agent.sbatch calls ./agent run
 ```
+
+On the EX3 login node, only clone, pull, authenticate and validate. Do not run
+the long-lived agent there.
 
 The launcher never submits a Slurm job. Preben owns and edits the batch file,
 including partition, node, GPU, CPU, memory and wall-time directives, and
