@@ -19,6 +19,7 @@ REGISTRY_AUTH_FILE="${AGENT_REGISTRY_AUTH_FILE:-$HOME/.apptainer/agent-registry-
 HOST_SENTINEL="$RUN_DIR/host-only-sentinel"
 RESOLV_CONF="$RUN_DIR/resolv.conf"
 PROCESS_LOCK="$LOCAL/process.lock"
+WSL_CUDA_LIB_DIR=/usr/local/cuda/targets/x86_64-linux/lib
 
 WORKER_PID=
 GATEWAY_PID=
@@ -347,7 +348,11 @@ write_worker_env() {
     write_env_line "$WORKER_ENV" GITHUB_REPOSITORY "${GITHUB_REPOSITORY:-}"
 
     if [[ "$AGENT_GPU" == nv ]]; then
-        write_env_line "$WORKER_ENV" LD_LIBRARY_PATH /.singularity.d/libs
+        if is_wsl; then
+            write_env_line "$WORKER_ENV" LD_LIBRARY_PATH "$WSL_CUDA_LIB_DIR:/.singularity.d/libs"
+        else
+            write_env_line "$WORKER_ENV" LD_LIBRARY_PATH /.singularity.d/libs
+        fi
     fi
     if [[ -n "$CA_BUNDLE" ]]; then
         write_env_line "$WORKER_ENV" SSL_CERT_FILE /run/agent-ca/ca.pem
@@ -393,8 +398,13 @@ build_worker_args() {
             if is_wsl; then
                 command -v nvidia-container-cli >/dev/null 2>&1 ||
                     die 'nvidia-container-toolkit is required for NVIDIA GPU access under WSL'
+                [[ -r "$WSL_CUDA_LIB_DIR/libcublasLt.so" ]] ||
+                    die "WSL CUDA runtime libraries are missing from $WSL_CUDA_LIB_DIR"
                 export NVIDIA_VISIBLE_DEVICES="${NVIDIA_VISIBLE_DEVICES:-all}"
-                WORKER_ARGS+=(--nvccli)
+                WORKER_ARGS+=(
+                    --nvccli
+                    --bind "$WSL_CUDA_LIB_DIR:$WSL_CUDA_LIB_DIR:ro"
+                )
             fi
             ;;
         rocm) WORKER_ARGS+=(--rocm) ;;

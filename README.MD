@@ -102,7 +102,7 @@ Set the partition, node constraint, GPU count, CPUs, memory, wall time and `AGEN
 
 The batch file runs the same `./agent run` command used directly. Set `AGENT_GPU=nv` for NVIDIA, `AGENT_GPU=rocm` for AMD and `AGENT_GPU=none` for CPU-only use. The current image supports x86-64 hosts and deliberately excludes large machine-learning stacks.
 
-Under WSL, NVIDIA passthrough additionally requires `nvidia-container-toolkit` on the host. The launcher then uses Apptainer's WSL-specific `--nvccli` path automatically. Native Linux hosts, including EX3, continue to use ordinary `--nv` passthrough.
+Under WSL, NVIDIA passthrough additionally requires `nvidia-container-toolkit` on the host. The launcher then uses Apptainer's WSL-specific `--nvccli` path and mounts the host CUDA runtime library directory read-only. Native Linux hosts, including EX3, continue to use ordinary `--nv` passthrough.
 
 ## Local files
 
