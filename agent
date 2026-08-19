@@ -283,12 +283,11 @@ pull_one_image() {
     printf '%s\n' "$IMAGE_REF" > "$IMAGE_REF_FILE"
     chmod 0600 "$IMAGE_REF_FILE"
 
-    actual_arch="$(apptainer inspect "$IMAGE" | sed -n 's/^org\.label-schema\.build-arch: //p' | head -n 1)"
-    [[ "$actual_arch" == "$IMAGE_ARCH" ]] ||
-        die "pulled $IMAGE_VARIANT image reports architecture ${actual_arch:-unknown}, expected $IMAGE_ARCH"
-
     host_arch="$(normalize_arch "$(uname -m)")"
     if [[ "$host_arch" == "$IMAGE_ARCH" ]]; then
+        actual_arch="$(apptainer inspect "$IMAGE" | sed -n 's/^org\.label-schema\.build-arch: //p' | head -n 1)"
+        [[ "$actual_arch" == "$IMAGE_ARCH" ]] ||
+            die "pulled $IMAGE_VARIANT image reports architecture ${actual_arch:-unknown}, expected $IMAGE_ARCH"
         apptainer exec --compat --cleanenv --no-mount bind-paths,home,cwd,hostfs --pwd /app \
             "$IMAGE" /usr/local/bin/agent-entrypoint check
     else
