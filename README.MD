@@ -25,7 +25,7 @@ GitHub Actions builds the OCI image. This is the only place Docker is used. A la
 
 The manual `Build agent image` workflow:
 
-1. Checks out the selected stable OpenClaw release, verifies its exact commit, and uses OpenClaw's supported build argument to bundle the required plugins.
+1. Checks out the selected stable OpenClaw release, verifies its exact commit, and retains the required official plugin code in the image.
 2. Publishes `ghcr.io/prebenness/dr-clankenstein-runtime-v2` using the `GHCR_PUBLISH_TOKEN` Actions secret.
 3. Refuses an existing package unless GitHub reports it as private.
 4. Verifies the published package is private and rejects anonymous manifest access.
@@ -82,7 +82,7 @@ chmod 600 .env
 ./agent run
 ```
 
-`auth` performs one interactive Codex device login. `validate` checks configuration, model authentication, required plugins, internet access, repository access and the gateway/worker mount boundary. `run` stays in the foreground and stops both instances on `Ctrl-C`.
+`init` registers the Slack plugin already inside the image and does not contact npm. `auth` performs one interactive Codex device login. `validate` checks configuration, model authentication, required plugins, internet access, repository access and the gateway/worker mount boundary. `run` stays in the foreground and stops both instances on `Ctrl-C`.
 
 To discard an installation's generated state while preserving its tracked files and `.env`:
 

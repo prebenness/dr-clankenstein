@@ -448,7 +448,21 @@ stop_children() {
 }
 
 init_agent() {
-    prepare
+    local plugin_log
+
+    prepare_gateway_command
+    trap clean_runtime_env EXIT
+    plugin_log="$RUN_DIR/plugin-registration.log"
+    if ! gateway_cli plugins install --link /app/extensions/slack > "$plugin_log" 2>&1; then
+        cat "$plugin_log" >&2
+        die 'failed to register the image-contained Slack plugin'
+    fi
+    render_config
+    if ! gateway_cli plugins registry --refresh >> "$plugin_log" 2>&1; then
+        cat "$plugin_log" >&2
+        die 'failed to refresh the image-contained plugin registry'
+    fi
+    rm -f -- "$plugin_log"
     printf 'Initialised %s\n' "$AGENT_ID"
     printf 'State: %s\n' "$STATE"
     printf 'Workspace: %s\n' "$WORKSPACE"
