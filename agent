@@ -259,17 +259,24 @@ resolve_ca_bundle() {
 
 pull_one_image() {
     local variant="$1"
-    local partial actual_arch host_arch
+    local partial actual_arch host_arch cache_dir tmp_dir
 
     select_image "$variant" pull
-    mkdir -p "$IMAGES_DIR"
+    cache_dir="$LOCAL/apptainer-cache"
+    tmp_dir="$LOCAL/apptainer-tmp"
+    mkdir -p "$IMAGES_DIR" "$cache_dir" "$tmp_dir"
     partial="$IMAGE.partial"
     rm -f -- "$partial"
     if [[ -n "$CA_BUNDLE" ]]; then
-        SSL_CERT_FILE="$CA_BUNDLE" apptainer pull --force --arch "$IMAGE_ARCH" \
+        SSL_CERT_FILE="$CA_BUNDLE" \
+            APPTAINER_CACHEDIR="$cache_dir" \
+            APPTAINER_TMPDIR="$tmp_dir" \
+            apptainer pull --force --arch "$IMAGE_ARCH" \
             --authfile "$REGISTRY_AUTH_FILE" "$partial" "$IMAGE_REF"
     else
-        apptainer pull --force --arch "$IMAGE_ARCH" \
+        APPTAINER_CACHEDIR="$cache_dir" \
+            APPTAINER_TMPDIR="$tmp_dir" \
+            apptainer pull --force --arch "$IMAGE_ARCH" \
             --authfile "$REGISTRY_AUTH_FILE" "$partial" "$IMAGE_REF"
     fi
     mv -f -- "$partial" "$IMAGE"

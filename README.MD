@@ -93,7 +93,7 @@ chmod 600 .env
 
 `auth` performs one interactive Codex device login. `validate` checks configuration, model authentication, required plugins, Slack startup, internet access, repository access, long SSH commands and the gateway/worker mount boundary. `run` stays in the foreground and stops both instances on `Ctrl-C`.
 
-On the EX3 login node, use `./agent pull all` to stage all three SIF files after `image.lock` contains the completed build's three digests. Apptainer can pull the ARM image there without executing it. Run `./agent auth` and `./agent validate` there, but run the long-lived agent only inside a Slurm allocation.
+On the EX3 login node, use `./agent pull all` to stage all three SIF files after `image.lock` contains the completed build's three digests. Apptainer can pull the ARM image there without executing it. The launcher keeps Apptainer's cache and conversion temporary files under `.agent/`, so EX3 stores them on D1 with the checkout rather than in the small home filesystem. Run `./agent auth` and `./agent validate` on the login node, but run the long-lived agent only inside a Slurm allocation.
 
 To discard an installation's generated state while preserving its tracked files and `.env`:
 
@@ -133,6 +133,8 @@ Under WSL, NVIDIA passthrough additionally requires `nvidia-container-toolkit` o
 .agent/gateway-state/        OpenClaw sessions and Codex OAuth state
 .agent/workspace/            worker's persistent writable directory
 .agent/images/               immutable SIF files, one per runtime variant
+.agent/apptainer-cache/      host-side OCI layer cache used while pulling
+.agent/apptainer-tmp/        host-side SIF conversion temporary files
 .agent/logs/                 gateway, worker and scheduler logs
 AGENTS.md, SOUL.md, ...      user-written agent instructions
 ```
