@@ -8,6 +8,9 @@ mem=""
 script=""
 partitions_arg=""
 script_partition=""
+script_gpu=""
+runtime_arg=""
+runtime_filter=""
 use_script_partition=0
 verbose=0
 
@@ -28,6 +31,7 @@ Options:
   --mem SIZE              Memory, e.g. 8G. Default: from agent.sbatch if set
   --script PATH           Read resource defaults from an sbatch file
   -p, --partitions LIST   Comma-separated partitions to check
+  --runtime VARIANT       Only count nodes for cuda-amd64, cuda-arm64, or rocm-amd64
   --use-script-partition  Only check the partition from the sbatch file
   --verbose               Show pending-job details and sbatch test output
   -h, --help              Show this help
@@ -103,6 +107,8 @@ compact_status() {
         USABLE_NOW) printf 'OK\n' ;;
         USABLE_WITH_QUEUE) printf 'QUEUE\n' ;;
         NO_RESOURCES) printf 'FULL\n' ;;
+        INCOMPATIBLE) printf 'INCOMPAT\n' ;;
+        AMBIGUOUS) printf 'MIXED\n' ;;
         REJECTED) printf 'REJECT\n' ;;
         *) printf '%s\n' "$1" ;;
     esac
@@ -123,6 +129,12 @@ compact_why() {
             ;;
         NO_RESOURCES)
             printf 'no fitting node\n'
+            ;;
+        INCOMPATIBLE)
+            printf 'wrong image variant\n'
+            ;;
+        AMBIGUOUS)
+            printf 'mixed GPU runtimes\n'
             ;;
         REJECTED)
             printf 'scheduler rejected\n'
@@ -184,6 +196,65 @@ gpu_label_for_node() {
     else
         printf 'unknown\n'
     fi
+}
+
+gpu_vendor_for_node() {
+    local node=$1
+    local raw_type=${2,,}
+
+    case "$node" in
+        n001|n002|n003|n004|n015|n016|n023) printf 'amd\n'; return ;;
+        g001|g002|g003|gh001|gh002|n009|n010|n011|n012|n013|n014) printf 'nvidia\n'; return ;;
+    esac
+
+    case "$raw_type" in
+        mi50*|mi100*|mi210*|amd*) printf 'amd\n' ;;
+        a40*|a100*|h100*|h200*|gh200*|tesla|v100*|nvidia*) printf 'nvidia\n' ;;
+        *) printf 'unknown\n' ;;
+    esac
+}
+
+normalize_node_arch() {
+    local node=$1
+    local raw_arch=${2,,}
+
+    case "$raw_arch" in
+        x86_64|amd64) printf 'amd64\n'; return ;;
+        aarch64|arm64) printf 'arm64\n'; return ;;
+    esac
+
+    case "$node" in
+        gh001|gh002|n009|n010|n011|n012) printf 'arm64\n' ;;
+        g001|g002|g003|n001|n002|n003|n004|n013|n014|n015|n016|n023) printf 'amd64\n' ;;
+        *) printf 'unknown\n' ;;
+    esac
+}
+
+runtime_for_node() {
+    local node=$1
+    local raw_type=$2
+    local raw_arch=$3
+    local vendor arch
+
+    vendor=$(gpu_vendor_for_node "$node" "$raw_type")
+    arch=$(normalize_node_arch "$node" "$raw_arch")
+
+    case "$vendor:$arch" in
+        nvidia:amd64) printf 'cuda-amd64\n' ;;
+        nvidia:arm64) printf 'cuda-arm64\n' ;;
+        amd:amd64) printf 'rocm-amd64\n' ;;
+        *) printf 'unknown\n' ;;
+    esac
+}
+
+runtime_matches_filter() {
+    local runtime=$1
+
+    case "$runtime_filter" in
+        "") return 0 ;;
+        cuda) [[ "$runtime" == cuda-* ]] ;;
+        *) [[ "$runtime" == "$runtime_filter" ]] ;;
+    esac
 }
 
 gpu_count_from_gres() {
@@ -305,6 +376,15 @@ read_sbatch_defaults() {
 
     while IFS= read -r line || [[ -n "$line" ]]; do
         line=${line%$'\r'}
+
+        if [[ "$line" =~ ^[[:space:]]*export[[:space:]]+AGENT_GPU=(nv|rocm)[[:space:]]*(#.*)?$ ]]; then
+            script_gpu=${BASH_REMATCH[1]}
+        elif [[ "$line" =~ ^[[:space:]]*export[[:space:]]+AGENT_GPU=\"(nv|rocm)\"[[:space:]]*(#.*)?$ ]]; then
+            script_gpu=${BASH_REMATCH[1]}
+        elif [[ "$line" =~ ^[[:space:]]*export[[:space:]]+AGENT_GPU='(nv|rocm)'[[:space:]]*(#.*)?$ ]]; then
+            script_gpu=${BASH_REMATCH[1]}
+        fi
+
         [[ "$line" =~ ^[[:space:]]*#SBATCH[[:space:]]+(.+)$ ]] || continue
         args=${BASH_REMATCH[1]}
 
@@ -409,6 +489,8 @@ while (($#)); do
         --script) shift 2 ;;
         --partitions=*|--partition=*) partitions_arg=${1#*=}; shift ;;
         --partitions|--partition|-p) partitions_arg=${2:-}; [[ -n "$partitions_arg" ]] || die "--partitions requires a value"; shift 2 ;;
+        --runtime=*) runtime_arg=${1#*=}; [[ -n "$runtime_arg" ]] || die "--runtime requires a value"; shift ;;
+        --runtime) runtime_arg=${2:-}; [[ -n "$runtime_arg" ]] || die "--runtime requires a value"; shift 2 ;;
         --use-script-partition) use_script_partition=1; shift ;;
         --verbose) verbose=1; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -419,6 +501,17 @@ done
 [[ "$gpus" =~ ^[0-9]+$ && "$gpus" -gt 0 ]] || die "--gpus must be a positive integer"
 [[ "$cpus" =~ ^[0-9]+$ && "$cpus" -gt 0 ]] || die "--cpus must be a positive integer"
 
+if [[ -n "$runtime_arg" ]]; then
+    case "$runtime_arg" in
+        cuda-amd64|cuda-arm64|rocm-amd64) runtime_filter=$runtime_arg ;;
+        *) die "--runtime must be cuda-amd64, cuda-arm64, or rocm-amd64" ;;
+    esac
+elif [[ "$script_gpu" == "nv" ]]; then
+    runtime_filter=cuda
+elif [[ "$script_gpu" == "rocm" ]]; then
+    runtime_filter=rocm-amd64
+fi
+
 if (( use_script_partition )); then
     [[ -n "$script_partition" ]] || die "no partition found in ${script:-sbatch script}"
     partitions_arg=$script_partition
@@ -427,9 +520,9 @@ fi
 need_cmd scontrol
 need_cmd squeue
 
-declare -A node_parts node_state node_type node_total_gpu node_free_gpu node_total_cpu node_free_cpu node_total_mem node_free_mem
+declare -A node_parts node_state node_type node_runtime node_total_gpu node_free_gpu node_total_cpu node_free_cpu node_total_mem node_free_mem
 declare -A part_seen part_fit part_best part_best_score part_pending_count part_pending_first part_sbatch_msg part_sbatch_rc
-declare -A part_gpu_label
+declare -A part_gpu_label part_runtime part_compatible_nodes
 declare -A part_free_gpu part_total_gpu part_free_cpu part_total_cpu
 
 req_mem_mb=$(parse_mem_mb "$mem")
@@ -444,6 +537,7 @@ while IFS= read -r line; do
 
     parts=$(field "$line" Partitions)
     state=$(field "$line" State)
+    arch=$(field "$line" Arch)
     cpu_total=$(field "$line" CPUTot)
     cpu_alloc=$(field "$line" CPUAlloc)
     mem_total=$(field "$line" RealMemory)
@@ -464,6 +558,7 @@ while IFS= read -r line; do
     node_parts[$node]=$parts
     node_state[$node]=$state
     node_type[$node]=$(gpu_type_from_gres "$gres")
+    node_runtime[$node]=$(runtime_for_node "$node" "${node_type[$node]}" "$arch")
     node_total_gpu[$node]=$total_gpu
     node_free_gpu[$node]=$((total_gpu - gpu_used))
     node_total_cpu[$node]=$cpu_total
@@ -505,6 +600,11 @@ for node in "${!node_total_gpu[@]}"; do
     for part in "${!selected_parts[@]}"; do
         contains_partition "${node_parts[$node]}" "$part" || continue
 
+        runtime=${node_runtime[$node]}
+        part_runtime[$part]=$(append_unique_csv "${part_runtime[$part]:-}" "$runtime")
+        runtime_matches_filter "$runtime" || continue
+        part_compatible_nodes[$part]=$(( ${part_compatible_nodes[$part]:-0} + 1 ))
+
         free_gpu=${node_free_gpu[$node]}
         free_cpu=${node_free_cpu[$node]}
         total_gpu=${node_total_gpu[$node]}
@@ -524,7 +624,7 @@ for node in "${!node_total_gpu[@]}"; do
         score=$((free_gpu * 1000000 + free_cpu * 1000 + free_mem / 1024))
         if [[ -z "${part_best_score[$part]+x}" || "$score" -gt "${part_best_score[$part]}" ]]; then
             part_best_score[$part]=$score
-            part_best[$part]="${node}(${gpu_label},${free_gpu}/${total_gpu}g,${free_cpu}/${total_cpu}c"
+            part_best[$part]="${node}(${runtime},${gpu_label},${free_gpu}/${total_gpu}g,${free_cpu}/${total_cpu}c"
             if (( req_mem_mb > 0 && total_mem > 0 )); then
                 part_best[$part]+=",${free_mem}/${total_mem}M"
             fi
@@ -535,7 +635,7 @@ for node in "${!node_total_gpu[@]}"; do
             && (( free_gpu >= gpus )) \
             && (( free_cpu >= cpus )) \
             && (( req_mem_mb == 0 || total_mem == 0 || free_mem >= req_mem_mb )); then
-            part_fit[$part]="${part_fit[$part]:-}${node} "
+            part_fit[$part]="${part_fit[$part]:-}${node}/${runtime} "
         fi
     done
 done
@@ -558,16 +658,29 @@ for part in "${!selected_parts[@]}"; do
 done
 
 request_mem=$(format_mem "$req_mem_mb")
-printf 'REQUEST gpus=%s cpus=%s mem=%s time=%s' "$gpus" "$cpus" "$request_mem" "$time_limit"
+request_runtime=${runtime_filter:-any}
+[[ "$request_runtime" == "cuda" ]] && request_runtime='cuda-*'
+printf 'REQUEST gpus=%s cpus=%s mem=%s time=%s runtime=%s' "$gpus" "$cpus" "$request_mem" "$time_limit" "$request_runtime"
 [[ -n "$script" ]] && printf ' script=%s' "$script"
 [[ -n "$script_partition" ]] && printf ' script_partition=%s' "$script_partition"
+[[ -n "$script_gpu" ]] && printf ' script_gpu=%s' "$script_gpu"
 printf '\n'
 
 tmp=$(mktemp)
 trap 'rm -f "$tmp"' EXIT
 
 for part in "${!selected_parts[@]}"; do
-    if [[ -n "${part_fit[$part]:-}" ]]; then
+    if [[ -n "$runtime_filter" && ${part_compatible_nodes[$part]:-0} -eq 0 ]]; then
+        rank=3
+        status="INCOMPATIBLE"
+        fit_nodes="-"
+        why="no node in partition supports requested image variant"
+    elif [[ -n "$runtime_filter" && "${part_runtime[$part]:-}" == *,* ]]; then
+        rank=3
+        status="AMBIGUOUS"
+        fit_nodes="-"
+        why="partition mixes image variants; use a vendor-specific partition"
+    elif [[ -n "${part_fit[$part]:-}" ]]; then
         if (( ${part_pending_count[$part]:-0} > 0 )); then
             rank=1
             status="USABLE_WITH_QUEUE"
@@ -585,7 +698,8 @@ for part in "${!selected_parts[@]}"; do
         why="no node currently fits request"
     fi
 
-    if (( ${part_sbatch_rc[$part]:-0} != 0 )); then
+    if [[ "$status" != "INCOMPATIBLE" && "$status" != "AMBIGUOUS" ]] \
+        && (( ${part_sbatch_rc[$part]:-0} != 0 )); then
         status="REJECTED"
         rank=3
         why=${part_sbatch_msg[$part]:-"sbatch test failed"}
@@ -594,6 +708,7 @@ for part in "${!selected_parts[@]}"; do
     pending="${part_pending_count[$part]:-0}"
     [[ -n "${part_pending_first[$part]:-}" ]] && pending+=",first=${part_pending_first[$part]}"
 
+    runtime=${part_runtime[$part]:--}
     gpu=${part_gpu_label[$part]:--}
     free="${part_free_gpu[$part]:-0}/${part_total_gpu[$part]:-0}g,${part_free_cpu[$part]:-0}/${part_total_cpu[$part]:-0}c"
     best=${part_best[$part]:--}
@@ -605,13 +720,13 @@ for part in "${!selected_parts[@]}"; do
         why="${why:0:87}..."
     fi
 
-    printf '%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$rank" "$status" "$part" "$gpu" "$fit_nodes" "$free" "$best" "$pending" "$why" "$sched" >>"$tmp"
+    printf '%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$rank" "$status" "$part" "$runtime" "$gpu" "$fit_nodes" "$free" "$best" "$pending" "$why" "$sched" >>"$tmp"
 done
 
 if (( verbose )); then
     {
-        printf 'STATUS\tPARTITION\tGPU\tFIT_NODES\tFREE\tBEST_NODE\tPENDING\tWHY\tSBATCH_TEST\n'
+        printf 'STATUS\tPARTITION\tRUNTIME\tGPU\tFIT_NODES\tFREE\tBEST_NODE\tPENDING\tWHY\tSBATCH_TEST\n'
         sort -t$'\t' -k1,1n -k3,3 "$tmp" | cut -f2-
     } | {
         if command -v column >/dev/null 2>&1; then
@@ -622,11 +737,12 @@ if (( verbose )); then
     }
 else
     {
-        printf 'STATUS\tPARTITION\tGPU\tFIT\tFREE\tBEST\tNOTE\n'
-        while IFS=$'\t' read -r _rank status part gpu fit_nodes free best pending why _sched; do
-            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        printf 'STATUS\tPARTITION\tRUNTIME\tGPU\tFIT\tFREE\tBEST\tNOTE\n'
+        while IFS=$'\t' read -r _rank status part runtime gpu fit_nodes free best pending why _sched; do
+            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
                 "$(compact_status "$status")" \
                 "$part" \
+                "$(shorten "$runtime" 28)" \
                 "$(shorten "$gpu" 24)" \
                 "$(summarize_nodes "$fit_nodes")" \
                 "$free" \

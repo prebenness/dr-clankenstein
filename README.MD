@@ -4,7 +4,7 @@ This repository contains one research agent. The tracked Markdown files define i
 
 ## Runtime boundary
 
-The same immutable image runs as two separate Apptainer instances:
+The selected immutable image variant runs as two separate Apptainer instances:
 
 | Instance | Receives | Does not receive |
 | --- | --- | --- |
@@ -21,19 +21,30 @@ Both instances use the host network stack for outbound access. The design isolat
 
 ## Image
 
-GitHub Actions builds the OCI image. This is the only place Docker is used. A laptop or EX3 installation needs Apptainer and does not need Docker, OpenClaw, npm or Codex installed on the host.
+GitHub Actions builds the OCI images. This is the only place Docker is used. A laptop or EX3 installation needs Apptainer and does not need Docker, OpenClaw, npm or Codex installed on the host.
 
-The manual `Build agent image` workflow:
+The manual `Build agent images` workflow:
 
-1. Checks out the selected stable OpenClaw release, verifies its exact commit, and installs the OpenAI, memory and Slack plugin dependencies in the image.
-2. Publishes `ghcr.io/prebenness/dr-clankenstein-runtime-v2` using the `GHCR_PUBLISH_TOKEN` Actions secret.
-3. Refuses an existing package unless GitHub reports it as private.
-4. Verifies the published package is private and rejects anonymous manifest access.
-5. Prints the immutable image digest in the workflow summary.
+1. Checks out the selected stable OpenClaw release and verifies its exact commit on each native build host.
+2. Builds `cuda-amd64`, `cuda-arm64` and `rocm-amd64` from the same OpenClaw source and agent files.
+3. Publishes the three immutable images and a two-platform CUDA index under `ghcr.io/prebenness/dr-clankenstein-runtime-v2` using the `GHCR_PUBLISH_TOKEN` Actions secret.
+4. Refuses an existing package unless GitHub reports it as private.
+5. Verifies the published package is private and rejects anonymous manifest access.
+6. Prints all immutable image digests in the workflow summary.
 
 `GHCR_PUBLISH_TOKEN` must be a classic GitHub personal access token with `read:packages` and `write:packages`, and no repository scope. The same token can authenticate host-side pulls. The workflow deliberately does not use the public source repository's `GITHUB_TOKEN`, because a package published from it can inherit the public repository's visibility.
 
-The release is selected when the image is built, then its tag, source commit, package version and resulting image digest are pinned for reproducibility. Runtime startup never installs or updates packages. After a successful build, put the reported `docker://...@sha256:...` reference in `image.lock`.
+The release is selected when the images are built, then its tag, source commit, package version, ROCm base and resulting image digests are pinned for reproducibility. Runtime startup never installs or updates packages. After a successful build, put the three reported `docker://...@sha256:...` references in `image.lock`.
+
+The launcher selects exactly one variant for both instances:
+
+| Compute node | `AGENT_GPU` | Variant |
+| --- | --- | --- |
+| x86-64 NVIDIA or CPU-only | `nv` or `none` | `cuda-amd64` |
+| ARM64 NVIDIA or CPU-only | `nv` or `none` | `cuda-arm64` |
+| x86-64 AMD | `rocm` | `rocm-amd64` |
+
+The CUDA images contain the common research runtime and use Apptainer's NVIDIA passthrough. The ROCm image adds the pinned ROCm user-space runtime and PyTorch ROCm wheel, then uses Apptainer's AMD passthrough. A declared architecture or GPU-mode mismatch fails before worker startup. Actual device and runtime access is tested in the worker before the Slack gateway starts; the ROCm test includes a real PyTorch tensor computation.
 
 The current architecture and acceptance tests are recorded in `docs/working-plan.md`.
 
@@ -71,7 +82,7 @@ Use a clone in a Linux filesystem. On Windows, clone under the WSL home director
 5. Run the four launcher commands below.
 
 ```bash
-# Laptop WSL or EX3 login node; repository root.
+# Laptop WSL; repository root.
 cp .env.example .env
 chmod 600 .env
 ./agent pull
@@ -81,6 +92,8 @@ chmod 600 .env
 ```
 
 `auth` performs one interactive Codex device login. `validate` checks configuration, model authentication, required plugins, Slack startup, internet access, repository access, long SSH commands and the gateway/worker mount boundary. `run` stays in the foreground and stops both instances on `Ctrl-C`.
+
+On the EX3 login node, use `./agent pull all` to stage all three SIF files after `image.lock` contains the completed build's three digests. Apptainer can pull the ARM image there without executing it. Run `./agent auth` and `./agent validate` there, but run the long-lived agent only inside a Slurm allocation.
 
 To discard an installation's generated state while preserving its tracked files and `.env`:
 
@@ -107,9 +120,9 @@ Before submitting, inspect which GPU partitions currently fit those resources:
 ./free-gpus.sh
 ```
 
-The command reads `agent.sbatch` by default. Use `--verbose` for pending-job details and Slurm's `sbatch --test-only` response.
+The command reads `agent.sbatch` by default, including a literal `AGENT_GPU=nv` or `AGENT_GPU=rocm` setting, and reports the compatible runtime variant for each partition. Use `--runtime cuda-amd64`, `--runtime cuda-arm64` or `--runtime rocm-amd64` to filter explicitly. Use `--verbose` for pending-job details and Slurm's `sbatch --test-only` response.
 
-The batch file runs the same `./agent run` command used directly. Set `AGENT_GPU=nv` for NVIDIA, `AGENT_GPU=rocm` for AMD and `AGENT_GPU=none` for CPU-only use. The current image supports x86-64 hosts and deliberately excludes large machine-learning stacks.
+The batch file runs the same `./agent run` command used directly. Set `AGENT_GPU=nv` for NVIDIA, `AGENT_GPU=rocm` for AMD and `AGENT_GPU=none` for CPU-only use. The ROCm variant includes pinned PyTorch for immediate AMD compute. Other project-specific Python packages belong in the worker workspace.
 
 Under WSL, NVIDIA passthrough additionally requires `nvidia-container-toolkit` on the host. The launcher then uses Apptainer's WSL-specific `--nvccli` path and mounts the host CUDA runtime library directory read-only. Native Linux hosts, including EX3, continue to use ordinary `--nv` passthrough.
 
@@ -119,6 +132,7 @@ Under WSL, NVIDIA passthrough additionally requires `nvidia-container-toolkit` o
 .env                         host-side agent credentials
 .agent/gateway-state/        OpenClaw sessions and Codex OAuth state
 .agent/workspace/            worker's persistent writable directory
+.agent/images/               immutable SIF files, one per runtime variant
 .agent/logs/                 gateway, worker and scheduler logs
 AGENTS.md, SOUL.md, ...      user-written agent instructions
 ```

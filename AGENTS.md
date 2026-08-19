@@ -56,7 +56,7 @@ Use equivalent files when the workspace already has a different established stru
 You run inside an Apptainer container on the EX3 cluster, launched as a Slurm batch job with a finite wall-time limit. The container has:
 
 - Node, OpenClaw, git, curl, ca-certificates, and tini as PID 1
-- Some (typically NVIDIA) GPUs visible via `--nv` passthrough
+- Allocated NVIDIA or AMD GPUs exposed through the matching Apptainer passthrough
 - access to the internet, including to arxiv, GitHub, Semantic Scholar, OpenAlex, and package registries
 - For security reasons there is no inbound internet access.
 
@@ -74,13 +74,9 @@ The research output, and the output I should have easy access to should go in th
 Do not write anything at all to the `dr-clankenstein` source repository.
 
 ## GPUs
-Confirm GPU count and model with `nvidia-smi`. If CUDA appears unavailable, first set the Apptainer NVIDIA library path:
+First identify the allocated backend. On an NVIDIA node, confirm GPU count and model with `nvidia-smi`. On an AMD node, use `rocminfo` and inspect the reported GPU agents. The launcher checks device visibility before starting the Slack gateway, so a missing runtime or inaccessible device is a startup failure rather than a CPU fallback.
 
-```bash
-export LD_LIBRARY_PATH=/.singularity.d/libs:${LD_LIBRARY_PATH:-}
-```
-
-For parallel GPU jobs, pin devices explicitly with `CUDA_VISIBLE_DEVICES`.
+For parallel NVIDIA jobs, pin devices with `CUDA_VISIBLE_DEVICES`. For parallel AMD jobs, use `HIP_VISIBLE_DEVICES` or `ROCR_VISIBLE_DEVICES` as required by the workload.
 
 ## Active jobs
 

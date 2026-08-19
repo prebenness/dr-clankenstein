@@ -1,4 +1,4 @@
-name: Build agent image
+name: Build agent images
 
 on:
   workflow_dispatch:
@@ -12,9 +12,12 @@ env:
   OPENCLAW_REF: v2026.7.1-2
   OPENCLAW_COMMIT: 0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c
   OPENCLAW_VERSION: 2026.7.1
+  ROCM_VERSION: 6.2.4
+  ROCM_BASE_IMAGE: docker.io/rocm/dev-ubuntu-22.04:6.2.4@sha256:030304ab0a88778b627b2eb2354c419146e105f5ac39ffd9c2438c82ef54b584
+  PYTORCH_ROCM_VERSION: 2.6.0
 
 jobs:
-  build:
+  preflight:
     runs-on: ubuntu-24.04
     steps:
       - name: Verify package publisher credential
@@ -58,8 +61,45 @@ jobs:
               ;;
           esac
 
+  build:
+    needs: preflight
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: cuda-amd64
+            runner: ubuntu-24.04
+            arch: amd64
+            runtime: cuda
+          - variant: cuda-arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+            runtime: cuda
+          - variant: rocm-amd64
+            runner: ubuntu-24.04
+            arch: amd64
+            runtime: rocm
+    runs-on: ${{ matrix.runner }}
+    steps:
       - name: Check out agent repository
         uses: actions/checkout@v7
+
+      - name: Reclaim ephemeral runner disk for ROCm build
+        if: matrix.runtime == 'rocm'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          df -h /
+          for target in \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/.ghcup; do
+            [[ ! -e "$target" ]] || sudo rm -rf -- "$target"
+          done
+          docker system prune --all --force
+          df -h /
 
       - name: Check out exact stable OpenClaw release
         uses: actions/checkout@v7
@@ -76,6 +116,8 @@ jobs:
           actual="$(jq -r .version openclaw-source/package.json)"
           test "$actual_commit" = "$OPENCLAW_COMMIT"
           test "$actual" = "$OPENCLAW_VERSION"
+          expected_host="$(test '${{ matrix.arch }}' = amd64 && printf x86_64 || printf aarch64)"
+          test "$(uname -m)" = "$expected_host"
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4
@@ -84,37 +126,111 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GHCR_PUBLISH_TOKEN }}
 
-      - name: Build pinned OpenClaw base
+      - name: Build and publish ${{ matrix.variant }}
+        id: image
         shell: bash
+        env:
+          REVISION: ${{ github.sha }}
+          VARIANT: ${{ matrix.variant }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          RUNTIME: ${{ matrix.runtime }}
         run: |
           set -Eeuo pipefail
+          openclaw_base="openclaw-base:$VARIANT"
+          runtime_base="$openclaw_base"
+          tag="sha-$REVISION-$VARIANT"
+          ref="$IMAGE_NAME:$tag"
+
           docker build \
             --build-arg OPENCLAW_EXTENSIONS=openai,memory-core,slack \
-            --tag openclaw-base:local \
+            --tag "$openclaw_base" \
             openclaw-source
 
-      - name: Build and push runtime image
-        id: image
+          if [[ "$RUNTIME" == rocm ]]; then
+            runtime_base="openclaw-rocm-base:$VARIANT"
+            docker build \
+              --build-arg OPENCLAW_BASE_IMAGE="$openclaw_base" \
+              --build-arg ROCM_BASE_IMAGE="$ROCM_BASE_IMAGE" \
+              --file container/Dockerfile.rocm-base \
+              --tag "$runtime_base" \
+              .
+          fi
+
+          docker build \
+            --build-arg OPENCLAW_BASE_IMAGE="$runtime_base" \
+            --build-arg IMAGE_REVISION="$REVISION" \
+            --build-arg IMAGE_VARIANT="$VARIANT" \
+            --build-arg TARGETARCH="$TARGET_ARCH" \
+            --build-arg ROCM_VERSION="$ROCM_VERSION" \
+            --build-arg PYTORCH_ROCM_VERSION="$PYTORCH_ROCM_VERSION" \
+            --file container/Dockerfile \
+            --tag "$ref" \
+            .
+
+          test "$(docker image inspect --format '{{.Architecture}}' "$ref")" = "$TARGET_ARCH"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.variant"}}' "$ref")" = "$VARIANT"
+          docker run --rm "$ref" check
+
+          if [[ "$RUNTIME" == rocm ]]; then
+            docker run --rm --entrypoint /bin/bash "$ref" -lc \
+              'test -x /opt/rocm/bin/rocminfo; test -e /opt/rocm/lib/libhsa-runtime64.so.1; ! ldd /opt/rocm/bin/rocminfo | grep -q "not found"; python3 -c '\''import torch; assert torch.__version__.startswith("2.6.0"); assert torch.version.hip and torch.version.hip.startswith("6.2")'\'''
+          fi
+
+          docker push "$ref" 2>&1 | tee /tmp/image-push.log
+          digest="$(sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' /tmp/image-push.log | tail -n 1)"
+          test -n "$digest"
+          printf 'ref=%s@%s\n' "$IMAGE_NAME" "$digest" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GHCR_PUBLISH_TOKEN }}
+
+      - name: Publish CUDA multi-architecture index
+        shell: bash
+        env:
+          REVISION: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          cuda_amd64="$IMAGE_NAME:sha-$REVISION-cuda-amd64"
+          cuda_arm64="$IMAGE_NAME:sha-$REVISION-cuda-arm64"
+          cuda_index="$IMAGE_NAME:sha-$REVISION-cuda"
+
+          docker buildx imagetools create \
+            --tag "$cuda_index" \
+            "$cuda_amd64" \
+            "$cuda_arm64"
+
+          docker buildx imagetools inspect --raw "$cuda_index" > /tmp/cuda-index.json
+          jq -e \
+            '[.manifests[].platform | (.os + "/" + .architecture)] | sort == ["linux/amd64", "linux/arm64"]' \
+            /tmp/cuda-index.json >/dev/null
+
+      - name: Verify privacy and report immutable references
         shell: bash
         env:
           REVISION: ${{ github.sha }}
           GHCR_PUBLISH_TOKEN: ${{ secrets.GHCR_PUBLISH_TOKEN }}
         run: |
           set -Eeuo pipefail
-          tag="sha-${REVISION}"
-          ref="$IMAGE_NAME:$tag"
+          cuda_amd64_tag="$IMAGE_NAME:sha-$REVISION-cuda-amd64"
+          cuda_arm64_tag="$IMAGE_NAME:sha-$REVISION-cuda-arm64"
+          rocm_amd64_tag="$IMAGE_NAME:sha-$REVISION-rocm-amd64"
+          cuda_index_tag="$IMAGE_NAME:sha-$REVISION-cuda"
 
-          docker build \
-            --build-arg OPENCLAW_BASE_IMAGE=openclaw-base:local \
-            --build-arg IMAGE_REVISION="$REVISION" \
-            --file container/Dockerfile \
-            --tag "$ref" \
-            .
-
-          docker push "$ref" 2>&1 | tee /tmp/image-push.log
-          digest="$(sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' /tmp/image-push.log | tail -n 1)"
-          test -n "$digest"
-          immutable_ref="$IMAGE_NAME@$digest"
+          cuda_amd64_digest="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$cuda_amd64_tag")"
+          cuda_arm64_digest="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$cuda_arm64_tag")"
+          rocm_amd64_digest="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$rocm_amd64_tag")"
+          cuda_index_digest="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$cuda_index_tag")"
+          for digest in "$cuda_amd64_digest" "$cuda_arm64_digest" "$rocm_amd64_digest" "$cuda_index_digest"; do
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          done
 
           visibility=
           for attempt in {1..15}; do
@@ -125,36 +241,41 @@ jobs:
               --header "Authorization: Bearer $GHCR_PUBLISH_TOKEN" \
               --header 'X-GitHub-Api-Version: 2022-11-28' \
               "https://api.github.com/users/${{ github.repository_owner }}/packages/container/$PACKAGE_NAME")"
-            if test "$status" = 200; then
+            if [[ "$status" == 200 ]]; then
               visibility="$(jq -r .visibility /tmp/package.json)"
               break
             fi
             sleep 2
           done
-          test "$visibility" = private || {
+          [[ "$visibility" == private ]] || {
             echo "Published package visibility is '$visibility', not 'private'." >&2
             exit 1
           }
 
           anonymous_config="$(mktemp -d)"
           printf '{"auths":{}}\n' > "$anonymous_config/config.json"
-          if DOCKER_CONFIG="$anonymous_config" docker manifest inspect "$immutable_ref" \
-              >/tmp/anonymous-manifest.out 2>/tmp/anonymous-manifest.err; then
-            echo 'The runtime image is anonymously accessible.' >&2
-            exit 1
-          fi
+          for ref in \
+            "$IMAGE_NAME@$cuda_index_digest" \
+            "$IMAGE_NAME@$rocm_amd64_digest"; do
+            if DOCKER_CONFIG="$anonymous_config" docker buildx imagetools inspect "$ref" \
+                >/tmp/anonymous-manifest.out 2>/tmp/anonymous-manifest.err; then
+              echo "The runtime image is anonymously accessible: $ref" >&2
+              exit 1
+            fi
+          done
           rm -rf -- "$anonymous_config"
 
-          printf 'ref=%s\n' "$immutable_ref" >> "$GITHUB_OUTPUT"
-
-      - name: Record immutable image reference
-        shell: bash
-        env:
-          IMAGE_REF: ${{ steps.image.outputs.ref }}
-        run: |
           {
-            printf '## Runtime image\n\n'
-            printf '```text\nIMAGE_REF=docker://%s\n```\n' "$IMAGE_REF"
+            printf '## Runtime images\n\n'
+            printf '```text\n'
+            printf 'IMAGE_CUDA_AMD64_REF=docker://%s@%s\n' "$IMAGE_NAME" "$cuda_amd64_digest"
+            printf 'IMAGE_CUDA_ARM64_REF=docker://%s@%s\n' "$IMAGE_NAME" "$cuda_arm64_digest"
+            printf 'IMAGE_ROCM_AMD64_REF=docker://%s@%s\n' "$IMAGE_NAME" "$rocm_amd64_digest"
+            printf 'CUDA_MULTIARCH_REF=docker://%s@%s\n' "$IMAGE_NAME" "$cuda_index_digest"
+            printf 'ROCM_VERSION=%s\n' "$ROCM_VERSION"
+            printf 'ROCM_BASE_IMAGE=%s\n' "$ROCM_BASE_IMAGE"
+            printf 'PYTORCH_ROCM_VERSION=%s\n' "$PYTORCH_ROCM_VERSION"
+            printf '```\n'
             printf '\nOpenClaw `%s` (`%s`) at commit `%s`.\n' \
               "$OPENCLAW_VERSION" "$OPENCLAW_REF" "$OPENCLAW_COMMIT"
           } >> "$GITHUB_STEP_SUMMARY"

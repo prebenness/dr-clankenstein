@@ -3,8 +3,9 @@ set -Eeuo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 LOCAL="$ROOT/.agent"
-IMAGE="$LOCAL/runtime.sif"
-IMAGE_REF_FILE="$LOCAL/image.ref"
+IMAGES_DIR="$LOCAL/images"
+LEGACY_IMAGE="$LOCAL/runtime.sif"
+LEGACY_IMAGE_REF_FILE="$LOCAL/image.ref"
 STATE="$LOCAL/gateway-state"
 WORKSPACE="$LOCAL/workspace"
 BOOTSTRAP="$LOCAL/bootstrap"
@@ -19,8 +20,14 @@ REGISTRY_AUTH_FILE="${AGENT_REGISTRY_AUTH_FILE:-$HOME/.apptainer/agent-registry-
 HOST_SENTINEL="$RUN_DIR/host-only-sentinel"
 RESOLV_CONF="$RUN_DIR/resolv.conf"
 PROCESS_LOCK="$LOCAL/process.lock"
+PLUGIN_LINK_STATE="$STATE/.agent-plugin-links-image-ref"
 WSL_CUDA_LIB_DIR=/usr/local/cuda/targets/x86_64-linux/lib
 
+IMAGE=
+IMAGE_REF_FILE=
+IMAGE_REF=
+IMAGE_ARCH=
+IMAGE_VARIANT=
 WORKER_PID=
 GATEWAY_PID=
 WORKER_ENV=
@@ -38,7 +45,9 @@ usage() {
 Usage: ./agent COMMAND
 
 Commands:
-  pull       Pull the image pinned in image.lock.
+  pull [VARIANT|all]
+             Pull the selected image, one named variant, or every variant.
+             Variants: cuda-amd64, cuda-arm64, rocm-amd64.
   auth       Sign in to Codex inside the gateway box.
   validate   Validate configuration, authentication, plugins, and isolation.
   run        Run the worker and Slack gateway in the foreground.
@@ -61,7 +70,7 @@ load_optional_env() {
     local -A overrides=()
 
     # Explicit launch and Slurm settings take precedence over .env defaults.
-    for name in AGENT_GPU AGENT_GATEWAY_PORT AGENT_WORKER_PORT AGENT_CA_BUNDLE; do
+    for name in AGENT_GPU AGENT_IMAGE_VARIANT AGENT_GATEWAY_PORT AGENT_WORKER_PORT AGENT_CA_BUNDLE; do
         [[ -v "$name" ]] && overrides["$name"]="${!name}"
     done
 
@@ -108,10 +117,78 @@ load_lock() {
     [[ -f "$LOCK_FILE" ]] || die "missing $LOCK_FILE"
     # shellcheck disable=SC1090
     source "$LOCK_FILE"
-    [[ "${IMAGE_REF:-}" =~ ^docker://ghcr\.io/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] ||
-        die 'image.lock does not yet contain an immutable GHCR image reference'
-    [[ "${IMAGE_ARCH:-}" == amd64 ]] || die "unsupported image architecture: ${IMAGE_ARCH:-missing}"
-    [[ "$(uname -m)" == x86_64 ]] || die 'this first image supports x86-64 hosts only'
+
+    # Accept the original lock during the transition to the three-image lock.
+    IMAGE_CUDA_AMD64_REF="${IMAGE_CUDA_AMD64_REF:-${IMAGE_REF:-}}"
+    IMAGE_CUDA_ARM64_REF="${IMAGE_CUDA_ARM64_REF:-}"
+    IMAGE_ROCM_AMD64_REF="${IMAGE_ROCM_AMD64_REF:-}"
+
+    [[ "$IMAGE_CUDA_AMD64_REF" =~ ^docker://ghcr\.io/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] ||
+        die 'image.lock does not contain the immutable cuda-amd64 image reference'
+    for IMAGE_REF in "$IMAGE_CUDA_ARM64_REF" "$IMAGE_ROCM_AMD64_REF"; do
+        [[ -z "$IMAGE_REF" || "$IMAGE_REF" =~ ^docker://ghcr\.io/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] ||
+            die 'image.lock contains an invalid immutable image reference'
+    done
+    IMAGE_REF=
+}
+
+normalize_arch() {
+    case "$1" in
+        x86_64|amd64) printf 'amd64\n' ;;
+        aarch64|arm64) printf 'arm64\n' ;;
+        *) die "unsupported host architecture: $1" ;;
+    esac
+}
+
+select_image() {
+    local requested="${1:-}"
+    local purpose="${2:-runtime}"
+    local host_arch
+
+    if [[ -z "$requested" ]]; then
+        requested="${AGENT_IMAGE_VARIANT:-}"
+    fi
+    if [[ -z "$requested" ]]; then
+        host_arch="$(normalize_arch "$(uname -m)")"
+        if [[ "${AGENT_GPU:-none}" == rocm ]]; then
+            requested=rocm-amd64
+        else
+            requested="cuda-$host_arch"
+        fi
+    fi
+
+    case "$requested" in
+        cuda-amd64)
+            IMAGE_REF="$IMAGE_CUDA_AMD64_REF"
+            IMAGE_ARCH=amd64
+            ;;
+        cuda-arm64)
+            IMAGE_REF="$IMAGE_CUDA_ARM64_REF"
+            IMAGE_ARCH=arm64
+            ;;
+        rocm-amd64)
+            IMAGE_REF="$IMAGE_ROCM_AMD64_REF"
+            IMAGE_ARCH=amd64
+            ;;
+        *)
+            die "unknown image variant: $requested"
+            ;;
+    esac
+    [[ -n "$IMAGE_REF" ]] || die "image variant $requested has not been published in image.lock"
+
+    IMAGE_VARIANT="$requested"
+    IMAGE="$IMAGES_DIR/$IMAGE_VARIANT.sif"
+    IMAGE_REF_FILE="$IMAGES_DIR/$IMAGE_VARIANT.ref"
+
+    if [[ "$purpose" == runtime ]]; then
+        host_arch="$(normalize_arch "$(uname -m)")"
+        [[ "$host_arch" == "$IMAGE_ARCH" ]] ||
+            die "image variant $IMAGE_VARIANT cannot run on host architecture $host_arch"
+        case "$IMAGE_VARIANT:${AGENT_GPU:-none}" in
+            cuda-*:none|cuda-*:nv|rocm-amd64:none|rocm-amd64:rocm) ;;
+            *) die "image variant $IMAGE_VARIANT is incompatible with AGENT_GPU=${AGENT_GPU:-none}" ;;
+        esac
+    fi
 }
 
 derive_runtime() {
@@ -160,6 +237,13 @@ resolve_container_identity() {
 
 ensure_image() {
     load_lock
+    select_image "" runtime
+    if [[ ! -f "$IMAGE" && "$IMAGE_VARIANT" == cuda-amd64 \
+        && -f "$LEGACY_IMAGE" && -f "$LEGACY_IMAGE_REF_FILE" \
+        && "$(<"$LEGACY_IMAGE_REF_FILE")" == "$IMAGE_REF" ]]; then
+        IMAGE="$LEGACY_IMAGE"
+        IMAGE_REF_FILE="$LEGACY_IMAGE_REF_FILE"
+    fi
     [[ -f "$IMAGE" ]] || die 'runtime image is missing; run ./agent pull'
     [[ -f "$IMAGE_REF_FILE" ]] || die 'runtime image provenance is missing; run ./agent pull'
     [[ "$(<"$IMAGE_REF_FILE")" == "$IMAGE_REF" ]] || die 'runtime image does not match image.lock; run ./agent pull'
@@ -173,29 +257,61 @@ resolve_ca_bundle() {
     fi
 }
 
-pull_image() {
-    need_command apptainer
-    load_optional_env
-    load_lock
-    resolve_ca_bundle
-    [[ -f "$REGISTRY_AUTH_FILE" ]] ||
-        die "registry authentication is missing: $REGISTRY_AUTH_FILE"
-    mkdir -p "$LOCAL"
+pull_one_image() {
+    local variant="$1"
+    local partial actual_arch host_arch
 
-    local partial="$LOCAL/runtime.sif.partial"
+    select_image "$variant" pull
+    mkdir -p "$IMAGES_DIR"
+    partial="$IMAGE.partial"
     rm -f -- "$partial"
     if [[ -n "$CA_BUNDLE" ]]; then
-        SSL_CERT_FILE="$CA_BUNDLE" apptainer pull --force \
+        SSL_CERT_FILE="$CA_BUNDLE" apptainer pull --force --arch "$IMAGE_ARCH" \
             --authfile "$REGISTRY_AUTH_FILE" "$partial" "$IMAGE_REF"
     else
-        apptainer pull --force --authfile "$REGISTRY_AUTH_FILE" "$partial" "$IMAGE_REF"
+        apptainer pull --force --arch "$IMAGE_ARCH" \
+            --authfile "$REGISTRY_AUTH_FILE" "$partial" "$IMAGE_REF"
     fi
     mv -f -- "$partial" "$IMAGE"
     printf '%s\n' "$IMAGE_REF" > "$IMAGE_REF_FILE"
     chmod 0600 "$IMAGE_REF_FILE"
 
-    apptainer exec --compat --cleanenv --no-mount bind-paths,home,cwd,hostfs --pwd /app \
-        "$IMAGE" /usr/local/bin/agent-entrypoint check
+    actual_arch="$(apptainer inspect "$IMAGE" | sed -n 's/^org\.label-schema\.build-arch: //p' | head -n 1)"
+    [[ "$actual_arch" == "$IMAGE_ARCH" ]] ||
+        die "pulled $IMAGE_VARIANT image reports architecture ${actual_arch:-unknown}, expected $IMAGE_ARCH"
+
+    host_arch="$(normalize_arch "$(uname -m)")"
+    if [[ "$host_arch" == "$IMAGE_ARCH" ]]; then
+        apptainer exec --compat --cleanenv --no-mount bind-paths,home,cwd,hostfs --pwd /app \
+            "$IMAGE" /usr/local/bin/agent-entrypoint check
+    else
+        printf 'Pulled %s for %s; execution check is deferred to a matching host.\n' \
+            "$IMAGE_VARIANT" "$IMAGE_ARCH"
+    fi
+}
+
+pull_image() {
+    local requested="${1:-}"
+
+    need_command apptainer
+    load_optional_env
+    AGENT_GPU="${AGENT_GPU:-none}"
+    [[ "$AGENT_GPU" == none || "$AGENT_GPU" == nv || "$AGENT_GPU" == rocm ]] ||
+        die 'AGENT_GPU must be none, nv, or rocm'
+    load_lock
+    resolve_ca_bundle
+    [[ -f "$REGISTRY_AUTH_FILE" ]] ||
+        die "registry authentication is missing: $REGISTRY_AUTH_FILE"
+    mkdir -p "$LOCAL" "$IMAGES_DIR"
+
+    if [[ "$requested" == all ]]; then
+        pull_one_image cuda-amd64
+        pull_one_image cuda-arm64
+        pull_one_image rocm-amd64
+    else
+        select_image "$requested" pull
+        pull_one_image "$IMAGE_VARIANT"
+    fi
 }
 
 write_gateway_token() {
@@ -327,13 +443,14 @@ write_gateway_env() {
     write_env_line "$GATEWAY_ENV" OPENCLAW_GATEWAY_TOKEN "$OPENCLAW_GATEWAY_TOKEN"
     write_env_line "$GATEWAY_ENV" OPENCLAW_STATE_DIR /home/node/.openclaw
     write_env_line "$GATEWAY_ENV" OPENCLAW_CONFIG_PATH /home/node/.openclaw/openclaw.json
+    write_env_line "$GATEWAY_ENV" OPENCLAW_DISABLE_BUNDLED_SOURCE_OVERLAYS 1
 
     if [[ -n "$CA_BUNDLE" ]]; then
-        write_env_line "$GATEWAY_ENV" SSL_CERT_FILE /run/agent-ca/ca.pem
-        write_env_line "$GATEWAY_ENV" NODE_EXTRA_CA_CERTS /run/agent-ca/ca.pem
-        write_env_line "$GATEWAY_ENV" REQUESTS_CA_BUNDLE /run/agent-ca/ca.pem
-        write_env_line "$GATEWAY_ENV" GIT_SSL_CAINFO /run/agent-ca/ca.pem
-        write_env_line "$GATEWAY_ENV" CURL_CA_BUNDLE /run/agent-ca/ca.pem
+        write_env_line "$GATEWAY_ENV" SSL_CERT_FILE /etc/ssl/certs/ca-certificates.crt
+        write_env_line "$GATEWAY_ENV" NODE_EXTRA_CA_CERTS /etc/ssl/certs/ca-certificates.crt
+        write_env_line "$GATEWAY_ENV" REQUESTS_CA_BUNDLE /etc/ssl/certs/ca-certificates.crt
+        write_env_line "$GATEWAY_ENV" GIT_SSL_CAINFO /etc/ssl/certs/ca-certificates.crt
+        write_env_line "$GATEWAY_ENV" CURL_CA_BUNDLE /etc/ssl/certs/ca-certificates.crt
     fi
 }
 
@@ -347,19 +464,24 @@ write_worker_env() {
     write_env_line "$WORKER_ENV" GITHUB_PAT "$GITHUB_PAT"
     write_env_line "$WORKER_ENV" GITHUB_REPOSITORY "${GITHUB_REPOSITORY:-}"
 
-    if [[ "$AGENT_GPU" == nv ]]; then
-        if is_wsl; then
-            write_env_line "$WORKER_ENV" LD_LIBRARY_PATH "$WSL_CUDA_LIB_DIR:/.singularity.d/libs"
-        else
-            write_env_line "$WORKER_ENV" LD_LIBRARY_PATH /.singularity.d/libs
-        fi
-    fi
+    case "$AGENT_GPU" in
+        nv)
+            if is_wsl; then
+                write_env_line "$WORKER_ENV" LD_LIBRARY_PATH "$WSL_CUDA_LIB_DIR:/.singularity.d/libs"
+            else
+                write_env_line "$WORKER_ENV" LD_LIBRARY_PATH /.singularity.d/libs
+            fi
+            ;;
+        rocm)
+            write_env_line "$WORKER_ENV" LD_LIBRARY_PATH /opt/rocm/lib:/opt/rocm/lib64:/.singularity.d/libs
+            ;;
+    esac
     if [[ -n "$CA_BUNDLE" ]]; then
-        write_env_line "$WORKER_ENV" SSL_CERT_FILE /run/agent-ca/ca.pem
-        write_env_line "$WORKER_ENV" NODE_EXTRA_CA_CERTS /run/agent-ca/ca.pem
-        write_env_line "$WORKER_ENV" REQUESTS_CA_BUNDLE /run/agent-ca/ca.pem
-        write_env_line "$WORKER_ENV" GIT_SSL_CAINFO /run/agent-ca/ca.pem
-        write_env_line "$WORKER_ENV" CURL_CA_BUNDLE /run/agent-ca/ca.pem
+        write_env_line "$WORKER_ENV" SSL_CERT_FILE /etc/ssl/certs/ca-certificates.crt
+        write_env_line "$WORKER_ENV" NODE_EXTRA_CA_CERTS /etc/ssl/certs/ca-certificates.crt
+        write_env_line "$WORKER_ENV" REQUESTS_CA_BUNDLE /etc/ssl/certs/ca-certificates.crt
+        write_env_line "$WORKER_ENV" GIT_SSL_CAINFO /etc/ssl/certs/ca-certificates.crt
+        write_env_line "$WORKER_ENV" CURL_CA_BUNDLE /etc/ssl/certs/ca-certificates.crt
     fi
 }
 
@@ -376,7 +498,7 @@ build_gateway_args() {
     )
 
     if [[ -n "$CA_BUNDLE" ]]; then
-        GATEWAY_ARGS+=(--bind "$CA_BUNDLE:/run/agent-ca/ca.pem:ro")
+        GATEWAY_ARGS+=(--bind "$CA_BUNDLE:/etc/ssl/certs/ca-certificates.crt:ro")
     fi
 }
 
@@ -411,7 +533,7 @@ build_worker_args() {
     esac
 
     if [[ -n "$CA_BUNDLE" ]]; then
-        WORKER_ARGS+=(--bind "$CA_BUNDLE:/run/agent-ca/ca.pem:ro")
+        WORKER_ARGS+=(--bind "$CA_BUNDLE:/etc/ssl/certs/ca-certificates.crt:ro")
     fi
 }
 
@@ -419,6 +541,7 @@ prepare_gateway_command() {
     prepare
     write_gateway_env
     build_gateway_args
+    ensure_gateway_plugin_links
 }
 
 prepare_commands() {
@@ -430,6 +553,7 @@ prepare_commands() {
     write_worker_env
     build_gateway_args
     build_worker_args
+    ensure_gateway_plugin_links
 }
 
 reset_runtime_logs() {
@@ -441,6 +565,16 @@ reset_runtime_logs() {
 gateway_cli() {
     apptainer "${GATEWAY_ARGS[@]}" "$IMAGE" \
         /usr/local/bin/agent-entrypoint openclaw "$@"
+}
+
+ensure_gateway_plugin_links() {
+    local expected="v1|$IMAGE_VARIANT|$IMAGE_REF|slack=/opt/agent-plugins/slack"
+    if [[ -s "$PLUGIN_LINK_STATE" && "$(<"$PLUGIN_LINK_STATE")" == "$expected" ]]; then
+        return
+    fi
+    gateway_cli plugins install --link /opt/agent-plugins/slack
+    printf '%s\n' "$expected" > "$PLUGIN_LINK_STATE"
+    chmod 0600 "$PLUGIN_LINK_STATE"
 }
 
 start_worker() {
@@ -464,6 +598,13 @@ probe_worker_internet() {
 probe_worker_long_command() {
     apptainer "${GATEWAY_ARGS[@]}" "$IMAGE" \
         /usr/local/bin/agent-entrypoint probe-worker-long-command "$AGENT_USER" "$AGENT_WORKER_PORT"
+}
+
+probe_worker_gpu() {
+    [[ "$AGENT_GPU" != none ]] || return 0
+    apptainer "${GATEWAY_ARGS[@]}" "$IMAGE" \
+        /usr/local/bin/agent-entrypoint probe-worker-gpu \
+        "$AGENT_USER" "$AGENT_WORKER_PORT" "$AGENT_GPU"
 }
 
 probe_worker_repository() {
@@ -536,6 +677,7 @@ validate_agent() {
     start_worker
     wait_for_worker
     probe_worker
+    probe_worker_gpu
     probe_worker_long_command
     probe_worker_internet
     if [[ -n "${GITHUB_REPOSITORY:-}" ]]; then
@@ -586,6 +728,7 @@ run_agent() {
 
     start_worker
     wait_for_worker
+    probe_worker_gpu
     printf 'Worker ready on local port %s.\n' "$AGENT_WORKER_PORT"
 
     start_gateway
@@ -607,7 +750,8 @@ run_agent() {
 case "${1:-}" in
     pull)
         acquire_process_lock
-        pull_image
+        (($# <= 2)) || die 'pull accepts at most one variant or all'
+        pull_image "${2:-}"
         ;;
     auth)
         acquire_process_lock

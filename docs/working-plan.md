@@ -1,6 +1,6 @@
 # Research agent box: working plan
 
-Status: local implementation functional as of 2026-08-19. EX3, Slurm and the remaining acceptance checks are pending.
+Status: local implementation and EX3 login-node validation are functional as of 2026-08-19. Slurm GPU validation of the new image variants is pending.
 
 ## Objective
 
@@ -22,7 +22,7 @@ model-controlled tools must not be able to read Codex OAuth state.
 
 ## Minimum architecture
 
-One immutable image is started as two separate Apptainer instances:
+One selected immutable image variant is started as two separate Apptainer instances:
 
 ```text
 Slack <-> gateway <-> OpenAI
@@ -92,17 +92,36 @@ At implementation time:
 4. Only then record exact software versions, source commits and the immutable
    image digest for reproducibility.
 
-GitHub Actions builds and publishes a private OCI image. Laptop and EX3 hosts
-pull the immutable image with a host-only registry credential and convert it to
-a SIF. Docker is used only by GitHub Actions, not on the laptop or EX3.
+GitHub Actions builds and publishes private OCI images. Laptop and EX3 hosts
+pull immutable images with a host-only registry credential and convert them to
+SIF files. Docker is used only by GitHub Actions, not on the laptop or EX3.
 
-Current implementation selection, verified on 2026-08-18:
+The runtime has three variants built from the same pinned OpenClaw source and
+agent files:
+
+- `cuda-amd64` for x86-64 NVIDIA nodes and x86-64 CPU-only use;
+- `cuda-arm64` for ARM64 NVIDIA nodes and ARM64 CPU-only use; and
+- `rocm-amd64` for x86-64 AMD nodes.
+
+The launcher chooses one variant from the host architecture and `AGENT_GPU`,
+then uses that same SIF for both gateway and worker. A declared architecture or
+GPU-mode mismatch fails before worker startup. Actual GPU access is probed in
+the worker before the Slack gateway starts. The CUDA children are also
+published under one multi-platform OCI index; the launcher pins each child
+digest explicitly. The ROCm variant includes a pinned PyTorch ROCm wheel and
+its startup probe performs a real tensor computation.
+
+Current common runtime selection, verified on 2026-08-19:
 
 - OpenClaw release `v2026.7.1-2`, package version `2026.7.1`, source commit
   `0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c`;
 - OpenAI model `openai/gpt-5.6-sol`; and
-- Apptainer `1.5.3` in local WSL. The installed EX3 version still needs to be
-  checked when EX3 is reachable.
+- Apptainer `1.5.3` in local WSL and `1.5.0` on EX3.
+
+The variant build selection being implemented is NVIDIA for `linux/amd64` and
+`linux/arm64`, plus ROCm `6.2.4` and PyTorch `2.6.0` for `linux/amd64`. The
+ROCm version matches the EX3 module selected for the first AMD test; the
+resulting image and GPU execution still require build and Slurm verification.
 
 Local proof completed on 2026-08-19:
 
@@ -125,8 +144,8 @@ Local proof completed on 2026-08-19:
 - stopping the launcher removed both containers and both listeners.
 
 Still pending: a background-process test, a deliberate model-led credential
-search, worker-stop fail-closed proof, one inbound Slack request on the final
-setup, and EX3/Slurm tests including cluster GPU passthrough.
+search, and Slurm tests of the three image variants including cluster GPU
+passthrough.
 
 ## Credentials
 
@@ -164,8 +183,8 @@ submits it manually.
 3. Configure the explicit OpenClaw embedded runtime with Codex OAuth.
 4. Give the worker the full tool profile while disabling only paths that leave
    or control the box.
-5. Keep one image, one launcher and the same local, EX3 and Slurm execution
-   path.
+5. Keep one selected image variant per run, one launcher and the same local,
+   EX3 and Slurm execution path.
 6. Build a private immutable image in GitHub Actions.
 7. Purge generated local test state and perform the Gradient Unmasking Slack
    app test from a clean installation.

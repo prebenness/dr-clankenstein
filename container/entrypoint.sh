@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+[[ ! -d /opt/rocm/bin ]] || PATH="/opt/rocm/bin:$PATH"
+export PATH
 
 die() {
     printf 'ERROR: %s\n' "$*" >&2
@@ -215,6 +217,26 @@ probe_worker_long_command() {
     worker_ssh "$user" "$port" "printf 'worker long command ok\\n'; #$padding"
 }
 
+probe_worker_gpu() {
+    local user="${1:?worker user is required}"
+    local port="${2:?worker port is required}"
+    local mode="${3:?GPU mode is required}"
+
+    case "$mode" in
+        nv)
+            worker_ssh "$user" "$port" \
+                'output="$(nvidia-smi -L 2>&1)" && test -n "$output" && printf "worker GPU ok (NVIDIA): %s\n" "${output%%$'\''\n'\''*}"'
+            ;;
+        rocm)
+            worker_ssh "$user" "$port" \
+                'test -c /dev/kfd && output="$(rocminfo 2>&1)" && grep -Eq "Device Type:[[:space:]]+GPU" <<<"$output" && python3 -c '\''import torch; assert torch.version.hip; assert torch.cuda.is_available(); x = torch.arange(16, device="cuda", dtype=torch.float32).reshape(4, 4); y = x @ x; assert y.shape == (4, 4); torch.cuda.synchronize(); print(f"worker GPU ok (ROCm/PyTorch): {torch.cuda.get_device_name(0)}")'\'''
+            ;;
+        *)
+            die "unsupported GPU probe mode: $mode"
+            ;;
+    esac
+}
+
 probe_worker_repository() {
     local user="${1:?worker user is required}"
     local port="${2:?worker port is required}"
@@ -253,6 +275,12 @@ probe_gateway() {
 
 case "${1:-check}" in
     check)
+        printf 'Runtime image %s (%s)\n' "${AGENT_IMAGE_VARIANT:-unknown}" "${AGENT_IMAGE_ARCH:-unknown}"
+        if [[ "${AGENT_IMAGE_VARIANT:-}" == rocm-* ]]; then
+            [[ -x /opt/rocm/bin/rocminfo ]] || die 'the ROCm runtime is missing from the image'
+            [[ -e /opt/rocm/lib/libhsa-runtime64.so.1 ]] || die 'the ROCm HSA runtime is missing from the image'
+            python3 -c 'import torch; assert torch.version.hip' || die 'the ROCm PyTorch runtime is missing from the image'
+        fi
         [[ -f /opt/agent-plugins/slack/openclaw.plugin.json ]] ||
             die 'the Slack plugin is missing from the image'
         [[ -f /app/extensions/openai/openclaw.plugin.json ]] ||
@@ -298,6 +326,10 @@ case "${1:-check}" in
     probe-worker-long-command)
         shift
         probe_worker_long_command "$@"
+        ;;
+    probe-worker-gpu)
+        shift
+        probe_worker_gpu "$@"
         ;;
     probe-worker-repository)
         shift

@@ -3,12 +3,13 @@
 #SBATCH --partition=a100q
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
 #SBATCH --time=24:00:00
 #SBATCH --output=.agent/logs/slurm-%j.out
 
 set -Eeuo pipefail
 
 cd "$SLURM_SUBMIT_DIR"
+# nv selects the CUDA image matching the compute node architecture.
+# Use rocm on the x86 AMD partitions after pulling rocm-amd64.
 export AGENT_GPU=nv
 ./agent run
