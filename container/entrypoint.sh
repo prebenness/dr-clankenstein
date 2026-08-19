@@ -25,8 +25,8 @@ keygen() {
     if [[ ! -f "$gateway_dir/client_key.pub" ]]; then
         ssh-keygen -y -f "$gateway_dir/client_key" > "$gateway_dir/client_key.pub"
     fi
-    if [[ ! -f "$worker_dir/host_key" ]]; then
-        dropbearkey -t ed25519 -f "$worker_dir/host_key" >/dev/null 2>&1
+    if [[ ! -f "$worker_dir/ssh_host_key" ]]; then
+        ssh-keygen -q -t ed25519 -N '' -C agent-worker -f "$worker_dir/ssh_host_key"
     fi
 
     printf '%s %s\n' \
@@ -34,16 +34,17 @@ keygen() {
         "$(cat "$gateway_dir/client_key.pub")" \
         > "$worker_home/.ssh/authorized_keys"
 
-    host_public="$(dropbearkey -y -f "$worker_dir/host_key" 2>/dev/null | sed -n '/^ssh-/p' | head -n 1)"
+    host_public="$(ssh-keygen -y -f "$worker_dir/ssh_host_key")"
     [[ -n "$host_public" ]] || die 'could not derive the worker SSH host key'
     printf '[127.0.0.1]:%s %s\n' "$port" "$host_public" > "$gateway_dir/known_hosts"
 
     chmod 0600 \
         "$gateway_dir/client_key" \
         "$gateway_dir/known_hosts" \
-        "$worker_dir/host_key" \
+        "$worker_dir/ssh_host_key" \
         "$worker_home/.ssh/authorized_keys"
     chmod 0644 "$gateway_dir/client_key.pub"
+    [[ ! -f "$worker_dir/ssh_host_key.pub" ]] || chmod 0644 "$worker_dir/ssh_host_key.pub"
 }
 
 worker_shell() {
@@ -70,15 +71,29 @@ worker_shell() {
 
 worker() {
     local port="${AGENT_WORKER_PORT:?AGENT_WORKER_PORT is required}"
+    local login_home
     [[ "${AGENT_BOX_ROLE:-}" == worker ]] || die 'AGENT_BOX_ROLE must be worker'
     [[ -n "${GITHUB_PAT:-}" ]] || die 'GITHUB_PAT is missing from the worker environment'
-    [[ -r /run/agent-bridge/host_key ]] || die 'worker SSH host key is not mounted'
+    [[ -r /run/agent-bridge/ssh_host_key ]] || die 'worker SSH host key is not mounted'
+    login_home="$(getent passwd "$(id -u)" | cut -d: -f6)"
 
-    exec dropbear \
-        -F -E -e -m -s -g -w -j -k \
-        -P /tmp/agent-dropbear.pid \
-        -p "127.0.0.1:$port" \
-        -r /run/agent-bridge/host_key
+    exec /usr/sbin/sshd -D -e -f /dev/null \
+        -h /run/agent-bridge/ssh_host_key \
+        -p "$port" \
+        -o ListenAddress=127.0.0.1 \
+        -o PidFile=/tmp/agent-sshd.pid \
+        -o "AuthorizedKeysFile=$login_home/.ssh/authorized_keys" \
+        -o PasswordAuthentication=no \
+        -o KbdInteractiveAuthentication=no \
+        -o UsePAM=no \
+        -o PermitRootLogin=no \
+        -o AllowAgentForwarding=no \
+        -o AllowTcpForwarding=no \
+        -o X11Forwarding=no \
+        -o PermitTunnel=no \
+        -o PermitTTY=no \
+        -o StrictModes=yes \
+        -o LogLevel=ERROR
 }
 
 gateway() {
@@ -161,6 +176,15 @@ probe_worker_internet() {
         'wget --quiet --spider --timeout=15 https://api.github.com/ && printf "worker internet ok\n"'
 }
 
+probe_worker_long_command() {
+    local user="${1:?worker user is required}"
+    local port="${2:?worker port is required}"
+    local padding
+
+    printf -v padding '%020000d' 0
+    worker_ssh "$user" "$port" "printf 'worker long command ok\\n'; #$padding"
+}
+
 probe_worker_repository() {
     local user="${1:?worker user is required}"
     local port="${2:?worker port is required}"
@@ -199,13 +223,13 @@ probe_gateway() {
 
 case "${1:-check}" in
     check)
-        [[ -f /app/extensions/slack/openclaw.plugin.json ]] ||
+        [[ -f /opt/agent-plugins/slack/openclaw.plugin.json ]] ||
             die 'the Slack plugin is missing from the image'
         [[ -f /app/extensions/codex/openclaw.plugin.json ]] ||
             die 'the Codex OAuth companion package is missing from the image'
         node /app/openclaw.mjs --version
         git --version
-        dropbear -V
+        dpkg-query -W -f='OpenSSH server ${Version}\n' openssh-server
         ;;
     login-home)
         getent passwd "$(id -u)" | cut -d: -f6
@@ -240,6 +264,10 @@ case "${1:-check}" in
     probe-worker-internet)
         shift
         probe_worker_internet "$@"
+        ;;
+    probe-worker-long-command)
+        shift
+        probe_worker_long_command "$@"
         ;;
     probe-worker-repository)
         shift

@@ -95,11 +95,11 @@
   },
   "tools": {
     "profile": "full",
-    "deny": ["browser", "canvas", "cron", "gateway", "nodes", "slack"],
+    "deny": ["browser", "canvas", "cron", "gateway", "nodes"],
     "sandbox": {
       "tools": {
         "allow": [],
-        "deny": ["browser", "canvas", "cron", "gateway", "nodes", "slack"]
+        "deny": ["browser", "canvas", "cron", "gateway", "nodes"]
       }
     },
     "exec": {
@@ -155,6 +155,9 @@
   "plugins": {
     "enabled": true,
     "allow": ["slack", "openai", "memory-core"],
+    "load": {
+      "paths": ["/opt/agent-plugins/slack"]
+    },
     "entries": {
       "openai": {
         "enabled": true

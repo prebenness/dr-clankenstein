@@ -13,7 +13,7 @@ The same immutable image runs as two separate Apptainer instances:
 
 OpenClaw and the Slack connection run in the gateway. Model-controlled shell, process and file tools are sent over a loopback SSH connection to the worker. The model does not receive a shell in the gateway.
 
-OpenClaw owns the model loop and uses the selected OpenAI OAuth profile as its model transport. The Codex app-server runtime and its experimental sandbox bridge are not used. The Codex package is present but excluded from `plugins.allow`; this satisfies OpenClaw's OAuth setup check without enabling that runtime or downloading it during setup. The agent receives OpenClaw's full tool profile. Only tools that control something outside the worker are denied: gateway control, external nodes, browser/canvas host control, gateway cron, and direct Slack plugin actions. Normal Slack replies still pass through the gateway. Shell execution inside the worker is unrestricted and does not require approvals.
+OpenClaw owns the model loop and uses the selected OpenAI OAuth profile as its model transport. The Codex app-server runtime and its experimental sandbox bridge are not used. The Codex package is present but excluded from `plugins.allow`; this satisfies OpenClaw's OAuth setup check without enabling that runtime or downloading it during setup. The agent receives OpenClaw's full tool profile. Only tools that control something outside the worker are denied: gateway control, external nodes, browser/canvas host control, and gateway cron. Slack communication remains available through the gateway. Shell execution inside the worker is unrestricted and does not require approvals.
 
 The launcher reads `.env` on the host and gives each instance only its assigned variables. Temporary environment files are removed after process startup. Apptainer disables automatic host-home, current-directory, host-filesystem and administrator bind mounts. The worker's only persistent writable mount is `.agent/workspace/`. A generated copy of `/etc/resolv.conf` is mounted read-only to provide DNS.
 
@@ -69,20 +69,19 @@ Use a clone in a Linux filesystem. On Windows, clone under the WSL home director
 2. Create one Slack app from `slack-app-manifest.json` and add it to one private channel.
 3. Create one fine-grained GitHub token with access only to the agent's output repository.
 4. Create `.env` from the example and enter the credentials and identifiers.
-5. Run the five launcher commands below.
+5. Run the four launcher commands below.
 
 ```bash
 # Laptop WSL or EX3 login node; repository root.
 cp .env.example .env
 chmod 600 .env
 ./agent pull
-./agent init
 ./agent auth
 ./agent validate
 ./agent run
 ```
 
-`init` registers the Slack plugin already inside the image and does not contact npm. `auth` performs one interactive Codex device login. `validate` checks configuration, model authentication, required plugins, internet access, repository access and the gateway/worker mount boundary. `run` stays in the foreground and stops both instances on `Ctrl-C`.
+`auth` performs one interactive Codex device login. `validate` checks configuration, model authentication, required plugins, Slack startup, internet access, repository access, long SSH commands and the gateway/worker mount boundary. `run` stays in the foreground and stops both instances on `Ctrl-C`.
 
 To discard an installation's generated state while preserving its tracked files and `.env`:
 

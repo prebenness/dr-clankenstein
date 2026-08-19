@@ -7,10 +7,10 @@ RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         bash \
         build-essential \
-        dropbear-bin \
         git-lfs \
         jq \
         openssh-client \
+        openssh-server \
         python3-pip \
         python3-venv \
         ripgrep \
@@ -18,12 +18,17 @@ RUN apt-get update \
         unzip \
         wget \
         zip \
+    && rm -f /etc/ssh/ssh_host_* \
+    && mkdir -p /run/sshd \
+    && chmod 0755 /run/sshd \
     && rm -rf /var/lib/apt/lists/*
 
 COPY container/entrypoint.sh /usr/local/bin/agent-entrypoint
 COPY container/git-askpass.sh /usr/local/bin/agent-git-askpass
 
-RUN chmod 0755 /usr/local/bin/agent-entrypoint /usr/local/bin/agent-git-askpass
+RUN chmod 0755 /usr/local/bin/agent-entrypoint /usr/local/bin/agent-git-askpass \
+    && mkdir -p /opt/agent-plugins \
+    && ln -s /app/extensions/slack /opt/agent-plugins/slack
 
 USER node
 

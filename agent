@@ -18,6 +18,7 @@ LOCK_FILE="$ROOT/image.lock"
 REGISTRY_AUTH_FILE="${AGENT_REGISTRY_AUTH_FILE:-$HOME/.apptainer/agent-registry-auth.json}"
 HOST_SENTINEL="$RUN_DIR/host-only-sentinel"
 RESOLV_CONF="$RUN_DIR/resolv.conf"
+PROCESS_LOCK="$LOCAL/process.lock"
 
 WORKER_PID=
 GATEWAY_PID=
@@ -37,7 +38,6 @@ Usage: ./agent COMMAND
 
 Commands:
   pull       Pull the image pinned in image.lock.
-  init       Create this agent's local state and configuration.
   auth       Sign in to Codex inside the gateway box.
   validate   Validate configuration, authentication, plugins, and isolation.
   run        Run the worker and Slack gateway in the foreground.
@@ -46,6 +46,13 @@ EOF
 
 need_command() {
     command -v "$1" >/dev/null 2>&1 || die "$1 is required"
+}
+
+acquire_process_lock() {
+    need_command flock
+    mkdir -p "$LOCAL"
+    exec 9>"$PROCESS_LOCK"
+    flock -n 9 || die "another ./agent command is already using $ROOT"
 }
 
 load_optional_env() {
@@ -109,6 +116,18 @@ derive_runtime() {
     [[ "$AGENT_WORKER_PORT" != "$AGENT_GATEWAY_PORT" ]] || die 'gateway and worker ports must differ'
     [[ "$AGENT_GPU" == none || "$AGENT_GPU" == nv || "$AGENT_GPU" == rocm ]] ||
         die 'AGENT_GPU must be none, nv, or rocm'
+}
+
+port_is_open() {
+    local port="$1"
+    (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null
+}
+
+require_free_ports() {
+    port_is_open "$AGENT_WORKER_PORT" &&
+        die "worker port $AGENT_WORKER_PORT is already in use; stop the other agent instance"
+    port_is_open "$AGENT_GATEWAY_PORT" &&
+        die "gateway port $AGENT_GATEWAY_PORT is already in use; stop the other agent instance"
 }
 
 resolve_container_identity() {
@@ -369,12 +388,19 @@ prepare_gateway_command() {
 
 prepare_commands() {
     prepare
+    require_free_ports
     printf 'host-only\n' > "$HOST_SENTINEL"
     chmod 0600 "$HOST_SENTINEL"
     write_gateway_env
     write_worker_env
     build_gateway_args
     build_worker_args
+}
+
+reset_runtime_logs() {
+    : > "$LOG_DIR/worker.log"
+    : > "$LOG_DIR/gateway.log"
+    chmod 0600 "$LOG_DIR/worker.log" "$LOG_DIR/gateway.log"
 }
 
 gateway_cli() {
@@ -385,7 +411,7 @@ gateway_cli() {
 start_worker() {
     apptainer "${WORKER_ARGS[@]}" "$IMAGE" \
         /usr/local/bin/agent-entrypoint worker \
-        > >(tee -a "$LOG_DIR/worker.log") 2>&1 &
+        > >(tee "$LOG_DIR/worker.log") 2>&1 &
     WORKER_PID=$!
 }
 
@@ -398,6 +424,11 @@ probe_worker() {
 probe_worker_internet() {
     apptainer "${GATEWAY_ARGS[@]}" "$IMAGE" \
         /usr/local/bin/agent-entrypoint probe-worker-internet "$AGENT_USER" "$AGENT_WORKER_PORT"
+}
+
+probe_worker_long_command() {
+    apptainer "${GATEWAY_ARGS[@]}" "$IMAGE" \
+        /usr/local/bin/agent-entrypoint probe-worker-long-command "$AGENT_USER" "$AGENT_WORKER_PORT"
 }
 
 probe_worker_repository() {
@@ -447,38 +478,18 @@ stop_children() {
     clean_runtime_env
 }
 
-init_agent() {
-    local plugin_log
-
-    prepare_gateway_command
-    trap clean_runtime_env EXIT
-    plugin_log="$RUN_DIR/plugin-registration.log"
-    if ! gateway_cli plugins install --link /app/extensions/slack > "$plugin_log" 2>&1; then
-        cat "$plugin_log" >&2
-        die 'failed to register the image-contained Slack plugin'
-    fi
-    render_config
-    if ! gateway_cli plugins registry --refresh >> "$plugin_log" 2>&1; then
-        cat "$plugin_log" >&2
-        die 'failed to refresh the image-contained plugin registry'
-    fi
-    rm -f -- "$plugin_log"
-    printf 'Initialised %s\n' "$AGENT_ID"
-    printf 'State: %s\n' "$STATE"
-    printf 'Workspace: %s\n' "$WORKSPACE"
-}
-
 auth_agent() {
-    prepare_gateway_command
     trap clean_runtime_env EXIT
+    prepare_gateway_command
     gateway_cli config validate
     gateway_cli models auth login --provider openai --device-code
 }
 
 validate_agent() {
     local plugins
-    prepare_commands
     trap stop_children EXIT INT TERM
+    prepare_commands
+    reset_runtime_logs
 
     gateway_cli config validate
     plugins="$(gateway_cli plugins list --enabled)"
@@ -490,10 +501,13 @@ validate_agent() {
     start_worker
     wait_for_worker
     probe_worker
+    probe_worker_long_command
     probe_worker_internet
     if [[ -n "${GITHUB_REPOSITORY:-}" ]]; then
         probe_worker_repository
     fi
+    start_gateway
+    wait_for_gateway
     clean_runtime_env
     printf 'Validation passed.\n'
 }
@@ -501,14 +515,21 @@ validate_agent() {
 start_gateway() {
     apptainer "${GATEWAY_ARGS[@]}" "$IMAGE" \
         /usr/local/bin/agent-entrypoint gateway \
-        > >(tee -a "$LOG_DIR/gateway.log") 2>&1 &
+        > >(tee "$LOG_DIR/gateway.log") 2>&1 &
     GATEWAY_PID=$!
 }
 
 wait_for_gateway() {
-    local attempt
-    for ((attempt = 1; attempt <= 60; attempt++)); do
-        if (exec 3<>"/dev/tcp/127.0.0.1/$AGENT_GATEWAY_PORT") 2>/dev/null; then
+    local attempt status
+    for ((attempt = 1; attempt <= 90; attempt++)); do
+        status=
+        if exec 3<>"/dev/tcp/127.0.0.1/$AGENT_GATEWAY_PORT" 2>/dev/null; then
+            printf 'GET /readyz HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n' >&3
+            IFS= read -r status <&3 || true
+            exec 3>&-
+            exec 3<&-
+        fi
+        if [[ "$status" == *' 200 '* ]]; then
             rm -f -- "$GATEWAY_ENV"
             GATEWAY_ENV=
             return 0
@@ -517,15 +538,16 @@ wait_for_gateway() {
             die 'gateway stopped during startup; inspect .agent/logs/gateway.log'
         sleep 1
     done
-    die 'gateway did not listen within 60 seconds'
+    die 'gateway did not become ready within 90 seconds; inspect .agent/logs/gateway.log'
 }
 
 run_agent() {
     local finished status
-    prepare_commands
     trap stop_children EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
+    prepare_commands
+    reset_runtime_logs
 
     start_worker
     wait_for_worker
@@ -549,18 +571,19 @@ run_agent() {
 
 case "${1:-}" in
     pull)
+        acquire_process_lock
         pull_image
         ;;
-    init)
-        init_agent
-        ;;
     auth)
+        acquire_process_lock
         auth_agent
         ;;
     validate)
+        acquire_process_lock
         validate_agent
         ;;
     run)
+        acquire_process_lock
         run_agent
         ;;
     -h|--help|help|'')
