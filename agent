@@ -56,12 +56,24 @@ acquire_process_lock() {
 }
 
 load_optional_env() {
+    local name
+    local -A overrides=()
+
+    # Explicit launch and Slurm settings take precedence over .env defaults.
+    for name in AGENT_GPU AGENT_GATEWAY_PORT AGENT_WORKER_PORT AGENT_CA_BUNDLE; do
+        [[ -v "$name" ]] && overrides["$name"]="${!name}"
+    done
+
     if [[ -f "$ENV_FILE" ]]; then
         set -a
         # shellcheck disable=SC1090
         source "$ENV_FILE"
         set +a
     fi
+
+    for name in "${!overrides[@]}"; do
+        printf -v "$name" '%s' "${overrides[$name]}"
+    done
 }
 
 require_value() {
