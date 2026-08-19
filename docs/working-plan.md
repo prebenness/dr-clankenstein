@@ -107,6 +107,10 @@ Current implementation selection, verified on 2026-08-18:
 Local proof completed on 2026-08-19:
 
 - the OpenClaw runtime handled a real model turn;
+- gateway startup reported the memory and Slack runtime plugins and performed
+  no package installation;
+- no unrelated bundled skills were injected, while the full worker tool profile
+  remained available;
 - model-controlled `read`, `write` and `edit` calls ran in the worker and wrote
   the persistent workspace;
 - the worker reached the internet and the configured GitHub repository;
