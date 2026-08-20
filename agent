@@ -4,8 +4,6 @@ set -Eeuo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 LOCAL="$ROOT/.agent"
 IMAGES_DIR="$LOCAL/images"
-LEGACY_IMAGE="$LOCAL/runtime.sif"
-LEGACY_IMAGE_REF_FILE="$LOCAL/image.ref"
 STATE="$LOCAL/gateway-state"
 WORKSPACE="$LOCAL/workspace"
 BOOTSTRAP="$LOCAL/bootstrap"
@@ -114,22 +112,27 @@ load_env() {
 }
 
 load_lock() {
+    local name ref
+
     [[ -f "$LOCK_FILE" ]] || die "missing $LOCK_FILE"
+    IMAGE_CUDA_AMD64_REF=
+    IMAGE_CUDA_ARM64_REF=
+    IMAGE_ROCM_AMD64_REF=
     # shellcheck disable=SC1090
     source "$LOCK_FILE"
 
-    # Accept the original lock during the transition to the three-image lock.
-    IMAGE_CUDA_AMD64_REF="${IMAGE_CUDA_AMD64_REF:-${IMAGE_REF:-}}"
-    IMAGE_CUDA_ARM64_REF="${IMAGE_CUDA_ARM64_REF:-}"
-    IMAGE_ROCM_AMD64_REF="${IMAGE_ROCM_AMD64_REF:-}"
-
-    [[ "$IMAGE_CUDA_AMD64_REF" =~ ^docker://ghcr\.io/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] ||
-        die 'image.lock does not contain the immutable cuda-amd64 image reference'
-    for IMAGE_REF in "$IMAGE_CUDA_ARM64_REF" "$IMAGE_ROCM_AMD64_REF"; do
-        [[ -z "$IMAGE_REF" || "$IMAGE_REF" =~ ^docker://ghcr\.io/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] ||
-            die 'image.lock contains an invalid immutable image reference'
+    for name in IMAGE_CUDA_AMD64_REF IMAGE_CUDA_ARM64_REF IMAGE_ROCM_AMD64_REF; do
+        ref="${!name:-}"
+        [[ "$ref" =~ ^docker://ghcr\.io/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] ||
+            die "image.lock does not contain a valid immutable reference for $name"
     done
     IMAGE_REF=
+}
+
+configure_apptainer_storage() {
+    export APPTAINER_CACHEDIR="$LOCAL/apptainer-cache"
+    export APPTAINER_TMPDIR="$LOCAL/apptainer-tmp"
+    mkdir -p "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR"
 }
 
 normalize_arch() {
@@ -238,12 +241,6 @@ resolve_container_identity() {
 ensure_image() {
     load_lock
     select_image "" runtime
-    if [[ ! -f "$IMAGE" && "$IMAGE_VARIANT" == cuda-amd64 \
-        && -f "$LEGACY_IMAGE" && -f "$LEGACY_IMAGE_REF_FILE" \
-        && "$(<"$LEGACY_IMAGE_REF_FILE")" == "$IMAGE_REF" ]]; then
-        IMAGE="$LEGACY_IMAGE"
-        IMAGE_REF_FILE="$LEGACY_IMAGE_REF_FILE"
-    fi
     [[ -f "$IMAGE" ]] || die 'runtime image is missing; run ./agent pull'
     [[ -f "$IMAGE_REF_FILE" ]] || die 'runtime image provenance is missing; run ./agent pull'
     [[ "$(<"$IMAGE_REF_FILE")" == "$IMAGE_REF" ]] || die 'runtime image does not match image.lock; run ./agent pull'
@@ -259,24 +256,18 @@ resolve_ca_bundle() {
 
 pull_one_image() {
     local variant="$1"
-    local partial actual_arch host_arch cache_dir tmp_dir
+    local partial actual_arch host_arch
 
     select_image "$variant" pull
-    cache_dir="$LOCAL/apptainer-cache"
-    tmp_dir="$LOCAL/apptainer-tmp"
-    mkdir -p "$IMAGES_DIR" "$cache_dir" "$tmp_dir"
+    mkdir -p "$IMAGES_DIR"
     partial="$IMAGE.partial"
     rm -f -- "$partial"
     if [[ -n "$CA_BUNDLE" ]]; then
         SSL_CERT_FILE="$CA_BUNDLE" \
-            APPTAINER_CACHEDIR="$cache_dir" \
-            APPTAINER_TMPDIR="$tmp_dir" \
             apptainer pull --force --arch "$IMAGE_ARCH" \
             --authfile "$REGISTRY_AUTH_FILE" "$partial" "$IMAGE_REF"
     else
-        APPTAINER_CACHEDIR="$cache_dir" \
-            APPTAINER_TMPDIR="$tmp_dir" \
-            apptainer pull --force --arch "$IMAGE_ARCH" \
+        apptainer pull --force --arch "$IMAGE_ARCH" \
             --authfile "$REGISTRY_AUTH_FILE" "$partial" "$IMAGE_REF"
     fi
     mv -f -- "$partial" "$IMAGE"
@@ -301,6 +292,7 @@ pull_image() {
 
     need_command apptainer
     load_optional_env
+    configure_apptainer_storage
     AGENT_GPU="${AGENT_GPU:-none}"
     [[ "$AGENT_GPU" == none || "$AGENT_GPU" == nv || "$AGENT_GPU" == rocm ]] ||
         die 'AGENT_GPU must be none, nv, or rocm'
@@ -407,6 +399,7 @@ prepare() {
     need_command apptainer
     need_command openssl
     load_env
+    configure_apptainer_storage
     HOST_ENV_FILE="$(readlink -f -- "$ENV_FILE")"
     if [[ -f "$REGISTRY_AUTH_FILE" ]]; then
         HOST_PRIVATE_FILE="$(readlink -f -- "$REGISTRY_AUTH_FILE")"

@@ -121,7 +121,8 @@ Current common runtime selection, verified on 2026-08-19:
 The built variants are NVIDIA for `linux/amd64` and `linux/arm64`, plus ROCm
 `6.2.4` and PyTorch `2.6.0` for `linux/amd64`. The ROCm version matches the EX3
 module selected for the first AMD test. GitHub Actions verified all three image
-builds on 2026-08-19; cluster GPU execution still requires Slurm verification.
+builds on 2026-08-19; current CUDA execution on EX3 still requires Slurm
+verification.
 
 Local proof completed on 2026-08-19:
 
