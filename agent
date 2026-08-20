@@ -130,9 +130,26 @@ load_lock() {
 }
 
 configure_apptainer_storage() {
+    local purpose="$1"
+
     export APPTAINER_CACHEDIR="$LOCAL/apptainer-cache"
-    export APPTAINER_TMPDIR="$LOCAL/apptainer-tmp"
-    mkdir -p "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR"
+    mkdir -p "$APPTAINER_CACHEDIR"
+
+    if [[ "$purpose" == runtime && -n "${SLURM_JOB_ID:-}" ]]; then
+        if [[ -n "${SLURM_TMPDIR:-}" \
+            && -d "$SLURM_TMPDIR" \
+            && -w "$SLURM_TMPDIR" \
+            && -x "$SLURM_TMPDIR" ]]; then
+            export APPTAINER_TMPDIR="$SLURM_TMPDIR"
+        else
+            [[ -d /tmp && -w /tmp && -x /tmp ]] ||
+                die 'no usable node-local temporary directory is available'
+            export APPTAINER_TMPDIR=/tmp
+        fi
+    else
+        export APPTAINER_TMPDIR="$LOCAL/apptainer-tmp"
+        mkdir -p "$APPTAINER_TMPDIR"
+    fi
 }
 
 normalize_arch() {
@@ -292,7 +309,7 @@ pull_image() {
 
     need_command apptainer
     load_optional_env
-    configure_apptainer_storage
+    configure_apptainer_storage pull
     AGENT_GPU="${AGENT_GPU:-none}"
     [[ "$AGENT_GPU" == none || "$AGENT_GPU" == nv || "$AGENT_GPU" == rocm ]] ||
         die 'AGENT_GPU must be none, nv, or rocm'
@@ -399,7 +416,7 @@ prepare() {
     need_command apptainer
     need_command openssl
     load_env
-    configure_apptainer_storage
+    configure_apptainer_storage runtime
     HOST_ENV_FILE="$(readlink -f -- "$ENV_FILE")"
     if [[ -f "$REGISTRY_AUTH_FILE" ]]; then
         HOST_PRIVATE_FILE="$(readlink -f -- "$REGISTRY_AUTH_FILE")"
