@@ -1,6 +1,6 @@
 # Research agent box: working plan
 
-Status: local implementation and EX3 login-node validation are functional as of 2026-08-19. All three private image variants build successfully and are pinned by digest. The ROCm variant passed an EX3 MI210 Slurm test; current NVIDIA Slurm validation is pending.
+Status: local implementation and EX3 login-node validation are functional as of 2026-08-20. All three private image variants build successfully and are pinned by digest. The ROCm and CUDA x86 variants passed EX3 Slurm tests; current CUDA ARM validation is pending.
 
 ## Objective
 
@@ -121,7 +121,7 @@ Current common runtime selection, verified on 2026-08-19:
 The built variants are NVIDIA for `linux/amd64` and `linux/arm64`, plus ROCm
 `6.2.4` and PyTorch `2.6.0` for `linux/amd64`. The ROCm version matches the EX3
 module selected for the first AMD test. GitHub Actions verified all three image
-builds on 2026-08-19; current CUDA execution on EX3 still requires Slurm
+builds on 2026-08-19; current CUDA ARM execution on EX3 still requires Slurm
 verification.
 
 Local proof completed on 2026-08-19:
@@ -147,8 +147,13 @@ Local proof completed on 2026-08-19:
 The `rocm-amd64` variant passed on EX3 node `n015` on 2026-08-19: the worker
 identified an AMD Instinct MI210, completed a PyTorch GPU tensor computation,
 and reached gateway and Slack readiness. The job was cancelled after the proof
-at 3 minutes 41 seconds. Still pending: current Slurm tests of `cuda-amd64` and
-`cuda-arm64`; no compatible NVIDIA GPU was free during this test window.
+at 3 minutes 41 seconds. The `cuda-amd64` variant passed on EX3 node `g002` on
+2026-08-20: the worker identified an NVIDIA A100 80 GB GPU, completed its GPU
+probe, and reached gateway and Slack readiness. Slurm provided no
+`SLURM_TMPDIR`, so runtime extraction used node-local `/tmp`; the shared
+`.agent/apptainer-tmp` remained empty. The job was cancelled after the proof at
+1 minute 23 seconds and shut down cleanly. Still pending: a current Slurm test
+of `cuda-arm64`; no compatible ARM NVIDIA GPU was free during this test window.
 
 ## Credentials
 
