@@ -2,14 +2,18 @@
 
 This repository contains one research agent. The tracked Markdown files define its behaviour. The ignored `.agent/` directory contains its local state and persistent research workspace.
 
+## Security assumption
+
+Assume prompt injection can disclose or misuse anything available to either instance. Every credential they receive is dedicated and expendable: recovery is to rotate the Slack and fine-grained GitHub tokens, repeat Codex OAuth, and regenerate the internal SSH keys. EX3 SSH credentials, host registry credentials, host home and unrelated host secrets remain outside both instances.
+
 ## Runtime boundary
 
 The selected immutable image variant runs as two separate Apptainer instances:
 
 | Instance | Receives | Does not receive |
 | --- | --- | --- |
-| Gateway | Slack tokens, Codex OAuth state, Markdown instructions, SSH client key | Research workspace, GitHub output token |
-| Worker | Research workspace, fine-grained GitHub output token, SSH server key | Slack tokens, Codex OAuth state, host files |
+| Gateway | Slack tokens, Codex OAuth state, Markdown instructions, installation-local SSH client key | Research workspace, GitHub output token |
+| Worker | Research workspace, fine-grained GitHub output token, installation-local SSH host key | Slack tokens, Codex OAuth state, host files |
 
 OpenClaw and the Slack connection run in the gateway. Model-controlled shell, process and file tools are sent over a loopback SSH connection to the worker. The model does not receive a shell in the gateway.
 
